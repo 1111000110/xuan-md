@@ -3,6 +3,7 @@ import { join } from 'path'
 import { readFile } from 'fs/promises'
 import { registerIpc, getState } from './ipc'
 import { buildMenu } from './menu'
+import { applyStartupTheme } from './theme'
 
 let mainWindow: BrowserWindow | null = null
 let pendingOpenPath: string | null = null
@@ -41,7 +42,7 @@ function createWindow(): BrowserWindow {
     minHeight: 480,
     show: false,
     title: 'xuan-md',
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#363b40' : '#ffffff',
+    backgroundColor: '#ffffff',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -103,6 +104,7 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
+  applyStartupTheme() // 套用上次选择的主题（默认浅色）
   registerIpc()
   buildMenu()
   createWindow()

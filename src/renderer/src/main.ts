@@ -5,11 +5,13 @@ import type { ActionName } from '@shared/ipc'
 
 const root = document.getElementById('app') as HTMLElement
 const statusbar = document.getElementById('statusbar') as HTMLElement
+const workarea = document.getElementById('workarea') as HTMLElement
+const outlineEl = document.getElementById('outline') as HTMLElement
 
-// 顶部标签栏（多文档）
+// 顶部标签栏（多文档）—— 放进右侧工作区，左侧是大纲
 const tabbar = document.createElement('div')
 tabbar.id = 'tabbar'
-document.body.insertBefore(tabbar, root)
+workarea.insertBefore(tabbar, root)
 
 const editorHost = document.createElement('div')
 editorHost.className = 'editor-host'
@@ -108,7 +110,58 @@ function updateStatus(): void {
 editor.onChange(() => {
   if (!loading) setDirty(true)
   updateStatus()
+  renderOutline()
 })
+
+// ── 大纲（左侧标题导航） ──────────────────────────────────────────────────────
+let outlineVisible = true
+
+function stripInline(s: string): string {
+  return s
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/[*_`~]/g, '')
+    .trim()
+}
+
+function renderOutline(): void {
+  const md = currentContent()
+  const items: { level: number; text: string }[] = []
+  let inFence = false
+  for (const line of md.split('\n')) {
+    if (/^```/.test(line)) {
+      inFence = !inFence
+      continue
+    }
+    if (inFence) continue
+    const m = line.match(/^(#{1,6})\s+(.+?)\s*$/)
+    if (m) items.push({ level: m[1].length, text: stripInline(m[2]) })
+  }
+  outlineEl.replaceChildren()
+  const title = document.createElement('div')
+  title.className = 'outline-title'
+  title.textContent = '大纲'
+  outlineEl.appendChild(title)
+  if (items.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'outline-empty'
+    empty.textContent = '暂无标题'
+    outlineEl.appendChild(empty)
+    return
+  }
+  items.forEach((h, i) => {
+    const el = document.createElement('div')
+    el.className = 'outline-item'
+    el.textContent = h.text || '(空标题)'
+    el.style.paddingLeft = `${10 + (h.level - 1) * 12}px`
+    el.addEventListener('click', () => editor.scrollToHeading(i))
+    outlineEl.appendChild(el)
+  })
+}
+
+function toggleOutline(): void {
+  outlineVisible = !outlineVisible
+  document.body.classList.toggle('no-outline', !outlineVisible)
+}
 
 // ── 标签栏渲染 ──────────────────────────────────────────────────────────────
 function renderTabs(): void {
@@ -159,6 +212,7 @@ function loadTab(t: Tab): void {
   updateStatus()
   pushState()
   renderTabs()
+  renderOutline()
   editor.focus()
 }
 
@@ -272,6 +326,7 @@ const handlers: Record<ActionName, () => void | Promise<unknown>> = {
   copy: () => editor.copy(),
   cut: () => editor.cut(),
   insertTable: () => editor.insertTable(),
+  toggleOutline: () => toggleOutline(),
   toggleSource: () => toggleSourceMode(),
   'format:bold': () => editor.wrap('**'),
   'format:italic': () => editor.wrap('*'),

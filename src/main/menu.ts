@@ -1,5 +1,6 @@
 import { Menu, app, BrowserWindow, shell } from 'electron'
 import type { ActionName } from '@shared/ipc'
+import { setTheme, currentTheme } from './theme'
 
 function send(action: ActionName): void {
   BrowserWindow.getFocusedWindow()?.webContents.send('action', action)
@@ -72,7 +73,41 @@ export function buildMenu(): void {
     {
       label: '视图',
       submenu: [
+        { label: '大纲', accelerator: 'CmdOrCtrl+\\', click: () => send('toggleOutline') },
         { label: '源代码模式', accelerator: 'CmdOrCtrl+/', click: () => send('toggleSource') },
+        { type: 'separator' },
+        {
+          label: '主题',
+          submenu: [
+            {
+              label: '浅色',
+              type: 'radio',
+              checked: currentTheme() === 'light',
+              click: () => {
+                setTheme('light')
+                buildMenu()
+              }
+            },
+            {
+              label: '深色',
+              type: 'radio',
+              checked: currentTheme() === 'dark',
+              click: () => {
+                setTheme('dark')
+                buildMenu()
+              }
+            },
+            {
+              label: '跟随系统',
+              type: 'radio',
+              checked: currentTheme() === 'system',
+              click: () => {
+                setTheme('system')
+                buildMenu()
+              }
+            }
+          ]
+        },
         { type: 'separator' },
         { role: 'resetZoom', label: '实际大小' },
         { role: 'zoomIn', label: '放大' },

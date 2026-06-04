@@ -29,6 +29,7 @@ export type ActionName =
   | 'copy'
   | 'cut'
   | 'insertTable'
+  | 'toggleOutline'
   | 'toggleSource'
   | 'format:bold'
   | 'format:italic'

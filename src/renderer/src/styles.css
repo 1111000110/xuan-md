@@ -1,18 +1,19 @@
 :root {
   --bg: #ffffff;
-  --fg: #34373b;
-  --accent: #4183c4;
+  --fg: #3a3f44;
+  --accent: #4682c2;
   --muted: #b4b4b4;
-  --marker: #c0c4cc;
-  --quote-bar: #dfe2e5;
-  --quote-fg: #6a737d;
-  --code-bg: #f3f4f4;
-  --status-fg: #8c8c8c;
-  --status-bg: #f7f7f7;
-  --border: #ececec;
-  --sel-bg: rgba(65, 131, 196, 0.16);
+  --marker: #c7ccd3;
+  --quote-bar: #e3e6ea;
+  --quote-fg: #8b9096;
+  --code-bg: #f1f2f4;
+  --code-fg: #c75c4a;
+  --status-fg: #9aa0a6;
+  --status-bg: #fafbfc;
+  --border: #ededf0;
+  --sel-bg: rgba(70, 130, 194, 0.15);
   --code-block-bg: #f6f8fa;
-  --hr-color: #d0d3d7;
+  --hr-color: #e3e6ea;
   --font-ui: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', sans-serif;
   --font-content: 'Helvetica Neue', 'PingFang SC', 'Lucida Grande', Arial, sans-serif;
   --font-mono: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
@@ -30,11 +31,55 @@ body {
 
 body {
   display: flex;
-  flex-direction: column;
+  flex-direction: row; /* 左：大纲 | 右：工作区 */
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
+}
+
+/* ── 左侧大纲 ── */
+#outline {
+  flex: 0 0 220px;
+  overflow-y: auto;
+  background: var(--status-bg);
+  border-right: 1px solid var(--border);
+  padding: 14px 0;
+  user-select: none;
+}
+body.no-outline #outline {
+  display: none;
+}
+.outline-title {
+  font-size: 11px;
+  color: var(--status-fg);
+  padding: 0 14px 8px;
+  letter-spacing: 0.06em;
+}
+.outline-empty {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 4px 14px;
+}
+.outline-item {
+  font-size: 13px;
+  color: var(--quote-fg);
+  padding: 4px 14px 4px 10px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.outline-item:hover {
+  background: var(--sel-bg);
+  color: var(--fg);
+}
+
+#workarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 #app {
@@ -101,11 +146,11 @@ body {
 /* ── 编辑列 ── */
 .xuan-editor {
   width: 100%;
-  max-width: 860px;
-  padding: 56px 60px 40vh;
+  max-width: 800px;
+  padding: 56px 56px 40vh;
   font-family: var(--font-content);
   font-size: 16px;
-  line-height: 1.7;
+  line-height: 1.75;
   color: var(--fg);
 }
 
@@ -119,34 +164,39 @@ body {
   caret-color: var(--accent);
 }
 
-.block.h1 {
-  font-size: 2em;
+.block.h1,
+.block.h2,
+.block.h3,
+.block.h4,
+.block.h5,
+.block.h6 {
   font-weight: 700;
   line-height: 1.3;
-  margin: 0.5em 0 0.2em;
+  letter-spacing: -0.01em;
+}
+.block.h1 {
+  font-size: 1.9em;
+  margin: 1.3em 0 0.5em;
 }
 .block.h2 {
-  font-size: 1.6em;
-  font-weight: 700;
-  line-height: 1.3;
-  margin: 0.5em 0 0.2em;
+  font-size: 1.55em;
+  margin: 1.25em 0 0.5em;
 }
 .block.h3 {
-  font-size: 1.3em;
-  font-weight: 700;
-  margin: 0.4em 0 0.2em;
+  font-size: 1.28em;
+  margin: 1.1em 0 0.4em;
 }
 .block.h4 {
   font-size: 1.1em;
-  font-weight: 700;
+  margin: 1em 0 0.3em;
 }
 .block.h5 {
   font-size: 1em;
-  font-weight: 700;
+  margin: 0.9em 0 0.3em;
 }
 .block.h6 {
-  font-size: 0.95em;
-  font-weight: 700;
+  font-size: 0.92em;
+  margin: 0.9em 0 0.3em;
   color: var(--quote-fg);
 }
 
@@ -207,9 +257,10 @@ body {
 /* ── 行内元素 ── */
 .block code {
   font-family: var(--font-mono);
-  font-size: 0.92em;
+  font-size: 0.88em;
+  color: var(--code-fg);
   background: var(--code-bg);
-  padding: 0.1em 0.32em;
+  padding: 0.15em 0.4em;
   border-radius: 4px;
 }
 .block a {
@@ -536,7 +587,8 @@ body {
     --marker: #6a7078;
     --quote-bar: #4b5057;
     --quote-fg: #8d949b;
-    --code-bg: #40454b;
+    --code-bg: #3b4047;
+    --code-fg: #e3a07c;
     --status-fg: #8d949b;
     --status-bg: #2f3338;
     --border: #41464b;

@@ -67,6 +67,8 @@ export class Editor {
   private selectCycle = 0
   /** Cmd+A 序列开始时的锚点块索引 */
   private selectAnchor = 0
+  /** 本轮 Cmd+A 是否从表格单元格起步（决定层级：本格→整表→模块→全文） */
+  private selectStartedInCell = false
   /** 表格右键菜单的浮层 */
   private tableMenu: HTMLElement | null = null
 
@@ -127,6 +129,15 @@ export class Editor {
     this.placeCaret(first, first.raw.length)
   }
 
+  /** 滚动到第 index 个标题块（供大纲点击跳转） */
+  scrollToHeading(index: number): void {
+    const hs = this.root.querySelectorAll(
+      '.block.h1, .block.h2, .block.h3, .block.h4, .block.h5, .block.h6'
+    )
+    const el = hs[index] as HTMLElement | undefined
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
   onChange(cb: () => void): void {
     this.changeCb = cb
   }
@@ -156,36 +167,55 @@ export class Editor {
 
   /** 飞书式渐进全选：连按 Cmd+A 依次「当前行 → 当前模块 → 全文」 */
   selectAll(): void {
+    const ae = document.activeElement as HTMLElement | null
+    const cell = ae && (ae.tagName === 'TD' || ae.tagName === 'TH') ? ae : null
     const n = this.blocks.length
 
-    // 第一次：选中当前行（块内原生全选）
+    // ── 起步（第一次 Cmd+A）──
     if (this.selectCycle === 0) {
-      const active = this.activeBlock()
-      this.selectAnchor = active ? this.indexOf(active) : 0
-      this.clearBlockSelection()
-      this.selectBlockText(this.selectAnchor)
+      this.selectStartedInCell = !!cell
+      if (cell) {
+        // 表格内：先选中本单元格内容
+        const tb = this.blockFromNode(cell)
+        this.selectAnchor = tb ? this.indexOf(tb) : 0
+        const range = document.createRange()
+        range.selectNodeContents(cell)
+        const sel = window.getSelection()
+        sel?.removeAllRanges()
+        sel?.addRange(range)
+      } else {
+        const active = this.activeBlock()
+        this.selectAnchor = active ? this.indexOf(active) : 0
+        this.clearBlockSelection()
+        this.selectBlockText(this.selectAnchor)
+      }
       this.selectCycle = 1
       return
     }
 
-    // 第二次：选中当前模块（相邻非空块组成的区块）
-    if (this.selectCycle === 1) {
+    // ── 表格路径第二次：整块选中该表格 ──
+    if (this.selectStartedInCell && this.selectCycle === 1) {
+      this.applyBlockSelection(this.selectAnchor, this.selectAnchor)
+      this.selectCycle = 2
+      return
+    }
+
+    // ── 模块（相邻非空块）：非表格在第二次、表格在第三次 ──
+    const moduleStep = this.selectStartedInCell ? 2 : 1
+    if (this.selectCycle === moduleStep) {
       const [from, to] = this.moduleRange(this.selectAnchor)
       if (to > from) {
         this.applyBlockSelection(from, to)
-        this.selectCycle = 2
+        this.selectCycle = moduleStep + 1
         return
       }
-      // 模块只有一行 —— 直接进入全文
+      // 模块只有一块 —— 落到全文
     }
 
-    // 第三次（及以后）：全文
-    if (n > 1) {
-      this.applyBlockSelection(0, n - 1)
-    } else {
-      this.selectBlockText(0)
-    }
-    this.selectCycle = 3
+    // ── 全文 ──
+    if (n > 1) this.applyBlockSelection(0, n - 1)
+    else this.selectBlockText(0)
+    this.selectCycle = moduleStep + 1
   }
 
   /** 锚点所在「模块」：以空行为界，向两侧扩展的连续非空块区间 */
@@ -217,7 +247,10 @@ export class Editor {
     for (let i = from; i <= to; i++) this.blocks[i].el.classList.add('block-selected')
     this.root.classList.add('block-sel-mode')
     const anchorIdx = Math.min(Math.max(this.selectAnchor, from), to)
-    this.blocks[anchorIdx].el.focus()
+    const anchorEl = this.blocks[anchorIdx].el
+    // 表格块本身 contenteditable=false，需临时可聚焦才能接收 Delete 等按键
+    if (anchorEl.contentEditable !== 'true' && anchorEl.tabIndex < 0) anchorEl.tabIndex = -1
+    anchorEl.focus()
     window.getSelection()?.removeAllRanges()
   }
 
@@ -647,6 +680,40 @@ export class Editor {
       else this.focusNextBlock(idx)
       return
     }
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      const sel = window.getSelection()
+      if (sel && !sel.isCollapsed) {
+        const a = this.closestCell(sel.anchorNode)
+        const f = this.closestCell(sel.focusNode)
+        if (a && f && a !== f) {
+          // 选区跨多个单元格（如全选整张表）→ 清空所有单元格内容
+          e.preventDefault()
+          this.clearAllCells(block)
+        }
+        // 单格内选区：不拦截，交给浏览器删除（input 事件里回写 raw）
+      }
+      return
+    }
+  }
+
+  private closestCell(node: Node | null): HTMLElement | null {
+    let el: HTMLElement | null = node instanceof HTMLElement ? node : (node?.parentElement ?? null)
+    while (el) {
+      if (el.tagName === 'TD' || el.tagName === 'TH') return el
+      el = el.parentElement
+    }
+    return null
+  }
+
+  /** 清空表格所有单元格内容（保留行列结构） */
+  private clearAllCells(block: Block): void {
+    const m = parseTable(block.raw)
+    m.headers = m.headers.map(() => '')
+    m.rows = m.rows.map((row) => row.map(() => ''))
+    block.raw = buildTable(m)
+    this.paint(block)
+    this.focusCell(block, -1, 0)
+    this.emitChange()
   }
 
   /** 在当前块后插入表格模板 + 一空行（菜单：插入表格） */
@@ -854,12 +921,18 @@ export class Editor {
     this.selectCycle = 0
     // 编辑态下点击链接不跳转，只用于定位光标
     if (target.closest('a')) e.preventDefault()
-    // 点击编辑区空白处：聚焦到最后一个块的末尾
+    // 点击编辑区空白处：在首块上方点 → 聚焦首块开头；否则 → 聚焦末块结尾
     if (target === this.root) {
+      const first = this.blocks[0]
       const last = this.blocks[this.blocks.length - 1]
-      if (last) {
-        last.el.focus()
-        this.placeCaret(last, last.raw.length)
+      if (!first || !last) return
+      const aboveFirst = e.clientY < first.el.getBoundingClientRect().top
+      const block = aboveFirst ? first : last
+      if (block.kind === 'table') {
+        this.focusCell(block, aboveFirst ? -1 : this.tableRowCount(block) - 1, 0)
+      } else {
+        block.el.focus()
+        this.placeCaret(block, aboveFirst ? 0 : block.raw.length)
       }
     }
   }

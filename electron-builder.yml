@@ -1,0 +1,36 @@
+appId: com.xuan.md
+productName: xuan-md
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+asarUnpack:
+  - resources/**
+mac:
+  target:
+    - dmg
+    - zip
+  category: public.app-category.productivity
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  # 直接声明可处理的文档类型：既按扩展名，也按系统 markdown UTI
+  # （macOS 实际是按 UTI net.daringfireball.markdown 路由 .md 文件的）
+  extendInfo:
+    CFBundleDocumentTypes:
+      - CFBundleTypeName: Markdown Document
+        CFBundleTypeRole: Editor
+        LSHandlerRank: Owner
+        LSItemContentTypes:
+          - net.daringfireball.markdown
+          - public.markdown
+        CFBundleTypeExtensions:
+          - md
+          - markdown
+          - mdown
+          - mkd
+          - mkdn
+          - mdtext
+          - text
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}

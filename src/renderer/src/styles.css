@@ -1,0 +1,547 @@
+:root {
+  --bg: #ffffff;
+  --fg: #34373b;
+  --accent: #4183c4;
+  --muted: #b4b4b4;
+  --marker: #c0c4cc;
+  --quote-bar: #dfe2e5;
+  --quote-fg: #6a737d;
+  --code-bg: #f3f4f4;
+  --status-fg: #8c8c8c;
+  --status-bg: #f7f7f7;
+  --border: #ececec;
+  --sel-bg: rgba(65, 131, 196, 0.16);
+  --code-block-bg: #f6f8fa;
+  --hr-color: #d0d3d7;
+  --font-ui: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', sans-serif;
+  --font-content: 'Helvetica Neue', 'PingFang SC', 'Lucida Grande', Arial, sans-serif;
+  --font-mono: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  flex: 1 1 auto;
+  overflow: auto;
+}
+
+/* ── 顶部标签栏（多文档） ── */
+#tabbar {
+  display: none; /* renderTabs 在 >1 个标签时切到 flex */
+  flex: 0 0 auto;
+  align-items: stretch;
+  height: 34px;
+  background: var(--status-bg);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  user-select: none;
+}
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 200px;
+  padding: 0 6px 0 14px;
+  font-size: 12.5px;
+  color: var(--status-fg);
+  border-right: 1px solid var(--border);
+  cursor: default;
+  white-space: nowrap;
+}
+.tab.active {
+  background: var(--bg);
+  color: var(--fg);
+}
+.tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tab-close {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 15px;
+  line-height: 1;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.55;
+}
+.tab-close:hover {
+  background: var(--sel-bg);
+  color: var(--accent);
+  opacity: 1;
+}
+
+.editor-host {
+  min-height: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+/* ── 编辑列 ── */
+.xuan-editor {
+  width: 100%;
+  max-width: 860px;
+  padding: 56px 60px 40vh;
+  font-family: var(--font-content);
+  font-size: 16px;
+  line-height: 1.7;
+  color: var(--fg);
+}
+
+/* ── 块 ── */
+.block {
+  outline: none;
+  margin: 0;
+  padding: 3px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  caret-color: var(--accent);
+}
+
+.block.h1 {
+  font-size: 2em;
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 0.5em 0 0.2em;
+}
+.block.h2 {
+  font-size: 1.6em;
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 0.5em 0 0.2em;
+}
+.block.h3 {
+  font-size: 1.3em;
+  font-weight: 700;
+  margin: 0.4em 0 0.2em;
+}
+.block.h4 {
+  font-size: 1.1em;
+  font-weight: 700;
+}
+.block.h5 {
+  font-size: 1em;
+  font-weight: 700;
+}
+.block.h6 {
+  font-size: 0.95em;
+  font-weight: 700;
+  color: var(--quote-fg);
+}
+
+.block.quote {
+  border-left: 4px solid var(--quote-bar);
+  padding-left: 14px;
+  color: var(--quote-fg);
+}
+
+/* 列表缩进：前导空白始终隐藏（仅为保 textContent 等于 raw），视觉缩进由 padding-left 提供 */
+.indent-src {
+  display: none;
+}
+
+.block.ul:not(:focus)::before {
+  content: '•  ';
+  color: var(--fg);
+}
+/* 深一层的无序列表用方块符号 */
+.block.ul[data-bullet='square']:not(:focus)::before {
+  content: '▪  ';
+}
+.block.ol {
+  /* ol 的序号由标记符本身呈现（见下方 .mk 规则） */
+}
+.block.task:not(:focus)::before {
+  content: '☐  ';
+  color: var(--quote-fg);
+}
+.block.task.checked:not(:focus)::before {
+  content: '☑  ';
+  color: var(--accent);
+}
+.block.task.checked:not(:focus) {
+  color: var(--quote-fg);
+  text-decoration: line-through;
+}
+
+/* ── 标记符显隐 ──
+   · 块前缀标记（#、>、-、1. 等，是 .block 的直接子 .mk）：聚焦该块即显示。
+   · 行内标记（**、*、` 等，包在 .md 里）：仅当光标落在该 .md 中（.reveal）才显示。 */
+.mk {
+  color: var(--marker);
+  display: none;
+}
+.block:focus > .mk {
+  display: inline;
+}
+.md.reveal > .mk {
+  display: inline;
+}
+/* 有序列表的序号在失焦时仍需可见 */
+.block.ol:not(:focus) > .mk {
+  display: inline;
+  color: var(--fg);
+}
+
+/* ── 行内元素 ── */
+.block code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  background: var(--code-bg);
+  padding: 0.1em 0.32em;
+  border-radius: 4px;
+}
+.block a {
+  color: var(--accent);
+  text-decoration: none;
+  cursor: text;
+}
+.block a:hover {
+  text-decoration: underline;
+}
+.block strong {
+  font-weight: 700;
+}
+.block em {
+  font-style: italic;
+}
+.block del {
+  color: var(--quote-fg);
+}
+
+/* ── 跨块选择（飞书式：整块高亮，光标隐藏） ── */
+.block.block-selected {
+  background: var(--sel-bg);
+  border-radius: 4px;
+}
+.block-sel-mode .block {
+  caret-color: transparent;
+}
+
+/* ── 水平分割线（--- / *** / ___） ── */
+.block.hr {
+  position: relative;
+  min-height: 1.7em;
+}
+.block.hr::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 2px solid var(--hr-color);
+  pointer-events: none;
+}
+
+/* ── 围栏代码块 ── */
+.block.code-line,
+.block.code-fence {
+  background: var(--code-block-bg);
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  line-height: 1.55;
+  padding: 1px 16px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  caret-color: var(--accent);
+}
+.block.code-fence-open {
+  border-radius: 6px 6px 0 0;
+  padding-top: 8px;
+  margin-top: 6px;
+}
+.block.code-fence-close {
+  border-radius: 0 0 6px 6px;
+  padding-bottom: 8px;
+  margin-bottom: 6px;
+}
+.fence-mark {
+  color: var(--marker);
+}
+
+/* ── 数学公式（KaTeX） ── */
+.math-display {
+  display: block;
+  text-align: center;
+  margin: 0.6em 0;
+}
+.math-inline {
+  padding: 0 1px;
+}
+.block.math-line .katex {
+  font-size: 1.04em;
+}
+
+/* ── Front Matter（文档头部 ---…--- 的 YAML 元信息） ── */
+.block.fm-line {
+  background: var(--code-block-bg);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--quote-fg);
+  padding: 1px 16px;
+  white-space: pre-wrap;
+}
+.block.fm-open {
+  border-radius: 6px 6px 0 0;
+  padding-top: 6px;
+}
+.block.fm-close {
+  border-radius: 0 0 6px 6px;
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+}
+
+/* ── 表格（可视化单元格编辑） ── */
+.block.table-block {
+  padding: 8px 0;
+}
+.tbl-wrap {
+  position: relative;
+  display: inline-block;
+}
+.md-table {
+  border-collapse: collapse;
+  font-size: 0.95em;
+}
+.md-table th,
+.md-table td {
+  border: 1px solid var(--border);
+  padding: 6px 13px;
+  min-width: 2.5em;
+  outline: none;
+}
+.md-table th {
+  background: var(--code-block-bg);
+  font-weight: 600;
+}
+.md-table tbody tr:nth-child(even) td {
+  background: var(--code-block-bg);
+}
+.md-table th:focus,
+.md-table td:focus {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+/* 增列 / 增行按钮：悬停时显现 */
+.tbl-add-col,
+.tbl-add-row {
+  position: absolute;
+  border: 1px dashed var(--border);
+  background: var(--code-block-bg);
+  color: var(--quote-fg);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+  user-select: none;
+}
+.tbl-wrap:hover .tbl-add-col,
+.tbl-wrap:hover .tbl-add-row {
+  opacity: 1;
+}
+.tbl-add-col {
+  top: 0;
+  right: -22px;
+  width: 18px;
+  height: 100%;
+}
+.tbl-add-row {
+  left: 0;
+  bottom: -22px;
+  width: 100%;
+  height: 18px;
+}
+.tbl-add-col:hover,
+.tbl-add-row:hover {
+  background: var(--sel-bg);
+  color: var(--accent);
+}
+
+/* 表格右键菜单 */
+.tbl-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 150px;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  user-select: none;
+}
+.tbl-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  padding: 6px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  font: inherit;
+}
+.tbl-menu-item:hover {
+  background: var(--sel-bg);
+  color: var(--accent);
+}
+.tbl-menu-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 6px;
+}
+
+/* highlight.js 令牌配色（浅色，One Light 风） */
+.hljs-comment,
+.hljs-quote {
+  color: #a0a1a7;
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-built_in,
+.hljs-literal,
+.hljs-type {
+  color: #a626a4;
+}
+.hljs-string,
+.hljs-regexp {
+  color: #50a14f;
+}
+.hljs-number {
+  color: #986801;
+}
+.hljs-title,
+.hljs-title.function_,
+.hljs-section {
+  color: #4078f2;
+}
+.hljs-attr,
+.hljs-attribute,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-name,
+.hljs-selector-tag {
+  color: #e45649;
+}
+.hljs-meta,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-link {
+  color: #0184bc;
+}
+
+/* highlight.js 令牌配色（深色，One Dark 风） */
+@media (prefers-color-scheme: dark) {
+  .hljs-comment,
+  .hljs-quote {
+    color: #7f848e;
+  }
+  .hljs-keyword,
+  .hljs-built_in,
+  .hljs-literal,
+  .hljs-type {
+    color: #c678dd;
+  }
+  .hljs-string,
+  .hljs-regexp {
+    color: #98c379;
+  }
+  .hljs-number {
+    color: #d19a66;
+  }
+  .hljs-title,
+  .hljs-title.function_,
+  .hljs-section {
+    color: #61afef;
+  }
+  .hljs-attr,
+  .hljs-attribute,
+  .hljs-variable,
+  .hljs-template-variable,
+  .hljs-name,
+  .hljs-selector-tag {
+    color: #e06c75;
+  }
+  .hljs-meta,
+  .hljs-symbol,
+  .hljs-bullet,
+  .hljs-link {
+    color: #56b6c2;
+  }
+}
+
+/* ── 状态栏 ── */
+#statusbar {
+  flex: 0 0 auto;
+  height: 28px;
+  line-height: 28px;
+  padding: 0 16px;
+  font-size: 12px;
+  color: var(--status-fg);
+  background: var(--status-bg);
+  border-top: 1px solid var(--border);
+  text-align: right;
+  user-select: none;
+}
+
+/* ── 源代码模式：整篇 markdown 的纯文本编辑 ── */
+.source-editor {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.7;
+  padding: 40px 60px;
+  caret-color: var(--accent);
+}
+
+/* 深色：参考 Typora「Night」主题的蓝灰色调，避免死黑 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #363b40;
+    --fg: #b8bfc6;
+    --accent: #6ca1e5;
+    --muted: #6a7078;
+    --marker: #6a7078;
+    --quote-bar: #4b5057;
+    --quote-fg: #8d949b;
+    --code-bg: #40454b;
+    --status-fg: #8d949b;
+    --status-bg: #2f3338;
+    --border: #41464b;
+    --sel-bg: rgba(108, 161, 229, 0.3);
+    --code-block-bg: #2b2f36;
+    --hr-color: #4b5057;
+  }
+}

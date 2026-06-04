@@ -1,0 +1,291 @@
+import 'katex/dist/katex.min.css'
+import './styles.css'
+import { Editor } from './editor'
+import type { ActionName } from '@shared/ipc'
+
+const root = document.getElementById('app') as HTMLElement
+const statusbar = document.getElementById('statusbar') as HTMLElement
+
+// 顶部标签栏（多文档）
+const tabbar = document.createElement('div')
+tabbar.id = 'tabbar'
+document.body.insertBefore(tabbar, root)
+
+const editorHost = document.createElement('div')
+editorHost.className = 'editor-host'
+root.appendChild(editorHost)
+
+const editor = new Editor(editorHost)
+
+// ── 源代码模式（Cmd+/）：整篇 markdown 的纯文本编辑 ──────────────────────────
+const sourceArea = document.createElement('textarea')
+sourceArea.className = 'source-editor'
+sourceArea.spellcheck = false
+sourceArea.style.display = 'none'
+root.appendChild(sourceArea)
+let sourceMode = false
+
+/** 当前内容：源码模式取 textarea，否则取编辑器 */
+function currentContent(): string {
+  return sourceMode ? sourceArea.value : editor.getContent()
+}
+
+function ensureWysiwyg(): void {
+  if (!sourceMode) return
+  sourceArea.style.display = 'none'
+  editorHost.style.display = ''
+  sourceMode = false
+}
+
+function toggleSourceMode(): void {
+  if (!sourceMode) {
+    sourceArea.value = editor.getContent()
+    editorHost.style.display = 'none'
+    sourceArea.style.display = 'block'
+    sourceMode = true
+    sourceArea.focus()
+  } else {
+    editor.setContent(sourceArea.value)
+    sourceArea.style.display = 'none'
+    editorHost.style.display = ''
+    sourceMode = false
+    updateStatus()
+    editor.focus()
+  }
+}
+
+sourceArea.addEventListener('input', () => {
+  setDirty(true)
+  const text = sourceArea.value
+  const words = (text.match(/[一-龥]|[A-Za-z0-9]+/g) || []).length
+  const lines = text.length ? text.split('\n').length : 0
+  statusbar.textContent = `${words} 字  ·  ${text.length} 字符  ·  ${lines} 行`
+})
+
+// ── 多标签文档状态 ──────────────────────────────────────────────────────────
+interface Tab {
+  id: number
+  path: string | null
+  content: string // 非激活标签的内容存这里；激活标签以编辑器为准
+  dirty: boolean
+}
+
+const tabs: Tab[] = []
+let activeId = 0
+let nextTabId = 1
+// 下面两个镜像「激活标签」的状态，供菜单/标题/保存使用
+let currentPath: string | null = null
+let dirty = false
+// 程序化加载内容时为 true，避免把「加载」当成「修改」而误标 dirty
+let loading = false
+
+function activeTab(): Tab | undefined {
+  return tabs.find((t) => t.id === activeId)
+}
+
+function fileName(): string {
+  return currentPath ? currentPath.split('/').pop()! : 'Untitled.md'
+}
+
+function pushState(): void {
+  window.api.updateState({ dirty, fileName: fileName(), filePath: currentPath ?? undefined })
+}
+
+function setDirty(value: boolean): void {
+  if (dirty === value) return
+  dirty = value
+  const t = activeTab()
+  if (t) t.dirty = value
+  renderTabs()
+  pushState()
+}
+
+function updateStatus(): void {
+  const s = editor.getStats()
+  statusbar.textContent = `${s.words} 字  ·  ${s.chars} 字符  ·  ${s.lines} 行`
+}
+
+editor.onChange(() => {
+  if (!loading) setDirty(true)
+  updateStatus()
+})
+
+// ── 标签栏渲染 ──────────────────────────────────────────────────────────────
+function renderTabs(): void {
+  tabbar.replaceChildren()
+  tabbar.style.display = 'flex' // 始终显示标签栏，哪怕只有一个标签
+  for (const t of tabs) {
+    const el = document.createElement('div')
+    el.className = 'tab' + (t.id === activeId ? ' active' : '')
+    el.title = t.path ?? 'Untitled'
+
+    const name = document.createElement('span')
+    name.className = 'tab-name'
+    name.textContent = (t.dirty ? '● ' : '') + (t.path ? t.path.split('/').pop()! : 'Untitled')
+    el.appendChild(name)
+
+    const close = document.createElement('button')
+    close.className = 'tab-close'
+    close.textContent = '×'
+    close.addEventListener('mousedown', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      closeTab(t.id)
+    })
+    el.appendChild(close)
+
+    el.addEventListener('mousedown', () => switchTo(t.id))
+    tabbar.appendChild(el)
+  }
+}
+
+// ── 标签操作 ────────────────────────────────────────────────────────────────
+function persistActive(): void {
+  const t = activeTab()
+  if (!t) return
+  t.content = currentContent()
+  t.dirty = dirty
+  t.path = currentPath
+}
+
+function loadTab(t: Tab): void {
+  ensureWysiwyg()
+  activeId = t.id
+  currentPath = t.path
+  loading = true
+  editor.setContent(t.content)
+  loading = false
+  dirty = t.dirty
+  updateStatus()
+  pushState()
+  renderTabs()
+  editor.focus()
+}
+
+function switchTo(id: number): void {
+  if (id === activeId) return
+  persistActive()
+  const t = tabs.find((x) => x.id === id)
+  if (t) loadTab(t)
+}
+
+function newTab(path: string | null, content: string): void {
+  persistActive()
+  const t: Tab = { id: nextTabId++, path, content, dirty: false }
+  tabs.push(t)
+  loadTab(t)
+}
+
+function openTab(path: string, content: string): void {
+  const existing = tabs.find((t) => t.path === path)
+  if (existing) {
+    switchTo(existing.id)
+    return
+  }
+  persistActive()
+  // 若当前只有一个空白未改的 Untitled，直接复用它（避免多出空标签）
+  const cur = activeTab()
+  if (tabs.length === 1 && cur && cur.path === null && !cur.dirty && cur.content === '') {
+    cur.path = path
+    cur.content = content
+    loadTab(cur)
+    return
+  }
+  const t: Tab = { id: nextTabId++, path, content, dirty: false }
+  tabs.push(t)
+  loadTab(t)
+}
+
+function closeTab(id: number): void {
+  const idx = tabs.findIndex((t) => t.id === id)
+  if (idx < 0) return
+  const wasActive = id === activeId
+  tabs.splice(idx, 1)
+  if (tabs.length === 0) {
+    newTab(null, '')
+    return
+  }
+  if (wasActive) {
+    loadTab(tabs[Math.min(idx, tabs.length - 1)])
+  } else {
+    renderTabs()
+  }
+}
+
+// ── 文件操作 ────────────────────────────────────────────────────────────────
+function newDoc(): void {
+  newTab(null, '')
+}
+
+function loadDoc(path: string, content: string): void {
+  openTab(path, content)
+}
+
+async function openDoc(): Promise<void> {
+  const res = await window.api.openFile()
+  if (!res) return
+  openTab(res.path, res.content)
+}
+
+async function save(): Promise<boolean> {
+  if (!currentPath) return saveAs()
+  const r = await window.api.writeFile(currentPath, currentContent())
+  if (r.ok) {
+    setDirty(false)
+    return true
+  }
+  window.alert('保存失败：' + r.error)
+  return false
+}
+
+async function saveAs(): Promise<boolean> {
+  const r = await window.api.saveAs(currentContent(), currentPath ?? 'Untitled.md')
+  if (!r) return false
+  currentPath = r.path
+  dirty = false
+  const t = activeTab()
+  if (t) {
+    t.path = r.path
+    t.dirty = false
+  }
+  renderTabs()
+  pushState()
+  updateStatus()
+  return true
+}
+
+// ── 菜单 / 快捷键动作分发 ────────────────────────────────────────────────────
+const handlers: Record<ActionName, () => void | Promise<unknown>> = {
+  new: newDoc,
+  open: openDoc,
+  save,
+  saveAs,
+  saveForClose: async () => {
+    const ok = await save()
+    if (ok) window.api.savedForClose()
+  },
+  closeTab: () => closeTab(activeId),
+  find: () => {
+    /* M5：查找替换 */
+  },
+  selectAll: () => editor.selectAll(),
+  copy: () => editor.copy(),
+  cut: () => editor.cut(),
+  insertTable: () => editor.insertTable(),
+  toggleSource: () => toggleSourceMode(),
+  'format:bold': () => editor.wrap('**'),
+  'format:italic': () => editor.wrap('*'),
+  'format:strike': () => editor.wrap('~~'),
+  'format:code': () => editor.wrap('`'),
+  'format:link': () => editor.wrap('[', '](url)')
+}
+
+window.api.onAction((action) => {
+  handlers[action]?.()
+})
+
+// 通过文件关联（双击 / “打开方式”）打开的 .md —— 新开一个标签
+window.api.onOpenFile(({ path, content }) => loadDoc(path, content))
+
+// ── 初始化：一个空白标签 ──────────────────────────────────────────────────────
+newTab(null, '')

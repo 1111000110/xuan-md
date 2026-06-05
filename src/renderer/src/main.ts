@@ -337,6 +337,14 @@ const handlers: Record<ActionName, () => void | Promise<unknown>> = {
     if (ok) window.api.savedForClose()
   },
   closeTab: () => closeTab(activeId),
+  undo: () => {
+    if (activeNativeInput()) document.execCommand('undo')
+    else editor.undo()
+  },
+  redo: () => {
+    if (activeNativeInput()) document.execCommand('redo')
+    else editor.redo()
+  },
   find: () => editor.openFind(),
   exportPdf: async () => {
     if (sourceMode) toggleSourceMode() // 切回所见即所得并同步内容，再走 print 渲染

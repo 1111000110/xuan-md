@@ -49,8 +49,8 @@ export function buildMenu(): void {
     {
       label: '编辑',
       submenu: [
-        { role: 'undo', label: '撤销' },
-        { role: 'redo', label: '重做' },
+        { label: '撤销', accelerator: 'CmdOrCtrl+Z', click: () => send('undo') },
+        { label: '重做', accelerator: 'CmdOrCtrl+Shift+Z', click: () => send('redo') },
         { type: 'separator' },
         { label: '剪切', accelerator: 'CmdOrCtrl+X', click: () => send('cut') },
         { label: '复制', accelerator: 'CmdOrCtrl+C', click: () => send('copy') },

@@ -44,6 +44,23 @@ export interface EditorStats {
   lines: number
 }
 
+// 自动配对：选区包裹用的全部开符 → 闭符
+const AUTO_PAIRS: Record<string, string> = {
+  '(': ')',
+  '[': ']',
+  '{': '}',
+  '`': '`',
+  '*': '*',
+  '_': '_',
+  '~': '~',
+  '"': '"',
+  "'": "'"
+}
+// 折叠光标下才自动补全的开括号（避开 markdown 强调符/反引号等易冲突的）
+const AUTO_CLOSE = new Set(['(', '[', '{'])
+// 可「跳过」的闭括号
+const AUTO_CLOSERS = new Set([')', ']', '}'])
+
 /** 一处查找命中：所在块下标 + 块内字符区间 */
 interface FindMatch {
   blockIdx: number
@@ -59,6 +76,18 @@ interface FindBar {
   replaceRow: HTMLElement
   replaceInput: HTMLInputElement
   caseBtn: HTMLElement
+}
+
+/** 撤销/重做：一处历史快照（整篇内容 + 光标位置 + 提交时刻） */
+interface CaretSnapshot {
+  idx: number
+  start: number
+  end: number
+}
+interface HistorySnapshot {
+  content: string
+  caret: CaretSnapshot | null
+  time: number
 }
 
 interface Block {
@@ -94,6 +123,12 @@ export class Editor {
   private tableMenu: HTMLElement | null = null
   /** 当前文档路径（用于图片相对路径解析 + 选择图片保存目录） */
   private docPath: string | null = null
+  /** 撤销/重做历史（自维护，因为每次输入都重置 innerHTML 会清掉浏览器原生撤销栈） */
+  private undoStack: HistorySnapshot[] = []
+  private redoStack: HistorySnapshot[] = []
+  private present: HistorySnapshot = { content: '', caret: null, time: 0 }
+  /** 重建块树（setContent/undo/redo）期间为 true，避免把重建当成用户编辑记入历史 */
+  private restoringHistory = false
   /** 查找替换：浮层 + 状态 */
   private findBar: FindBar | null = null
   private findHl: HTMLDivElement | null = null
@@ -145,6 +180,16 @@ export class Editor {
   }
 
   setContent(md: string): void {
+    this.rebuild(md)
+    // 载入新文档/切换标签：清空撤销历史，以当前内容为起点
+    this.undoStack = []
+    this.redoStack = []
+    this.present = { content: md, caret: null, time: Date.now() }
+  }
+
+  /** 由 markdown 重建块树（不触碰撤销历史） */
+  private rebuild(md: string): void {
+    this.restoringHistory = true
     this.root.replaceChildren()
     this.blocks = []
     const lines = md.length ? md.split('\n') : ['']
@@ -152,6 +197,7 @@ export class Editor {
     for (const b of this.computeCodeContext()) this.paint(b)
     this.detectAndMergeTables()
     this.emitChange()
+    this.restoringHistory = false
   }
 
   /** 告知当前文档路径，供图片相对路径解析与保存目录选择 */
@@ -892,7 +938,66 @@ export class Editor {
   }
 
   private emitChange(): void {
+    this.recordHistory()
     this.changeCb?.()
+  }
+
+  // ── 撤销 / 重做 ─────────────────────────────────────────────────────────────
+  /** 记录一次历史。连续输入按时间合并为一个撤销点。 */
+  private recordHistory(): void {
+    if (this.restoringHistory) return
+    const content = this.getContent()
+    if (content === this.present.content) return // 内容未变（可能仅光标移动）
+    const now = Date.now()
+    // 与上次提交间隔够长才另起撤销点；否则把这次输入并入当前撤销点
+    if (now - this.present.time >= 600) {
+      this.undoStack.push(this.present)
+      if (this.undoStack.length > 300) this.undoStack.shift()
+    }
+    this.redoStack = [] // 任何真实修改都使 redo 失效
+    this.present = { content, caret: this.captureCaret(), time: now }
+  }
+
+  private captureCaret(): CaretSnapshot | null {
+    const block = this.activeBlock()
+    if (!block) return null
+    const idx = this.indexOf(block)
+    if (idx < 0) return null
+    if (block.kind === 'table') return { idx, start: 0, end: 0 }
+    const { start, end } = selectionOffsets(block.el)
+    return { idx, start, end }
+  }
+
+  private restoreCaret(c: CaretSnapshot | null): void {
+    const b = c ? this.blocks[c.idx] : null
+    if (!c || !b) {
+      this.focus()
+      return
+    }
+    if (b.kind === 'table') {
+      b.el.focus()
+      return
+    }
+    b.el.focus()
+    this.placeCaret(b, c.start, c.end)
+  }
+
+  undo(): void {
+    if (this.undoStack.length === 0) return
+    const prev = this.undoStack.pop()!
+    this.redoStack.push(this.present)
+    this.present = { ...prev, time: Date.now() }
+    this.rebuild(prev.content)
+    this.restoreCaret(prev.caret)
+  }
+
+  redo(): void {
+    if (this.redoStack.length === 0) return
+    const next = this.redoStack.pop()!
+    this.undoStack.push(this.present)
+    this.present = { ...next, time: Date.now() }
+    this.rebuild(next.content)
+    this.restoreCaret(next.caret)
   }
 
   private onSelectionChange = (): void => {
@@ -967,6 +1072,9 @@ export class Editor {
 
     if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') this.desiredX = null
 
+    // 自动配对（选区包裹 / 自动补括号 / 跳过闭括号 / 退格删空配对）
+    if (this.handleAutoPair(block, e)) return
+
     switch (e.key) {
       case 'Enter':
         e.preventDefault()
@@ -996,6 +1104,61 @@ export class Editor {
         if (this.handleArrowH(block, 1)) e.preventDefault()
         break
     }
+  }
+
+  /** 自动配对。返回 true 表示已接管该按键。 */
+  private handleAutoPair(block: Block, e: KeyboardEvent): boolean {
+    if (e.metaKey || e.ctrlKey || e.altKey) return false
+    const key = e.key
+    const sel = window.getSelection()
+    const hasSelection = !!sel && !sel.isCollapsed && this.root.contains(sel.anchorNode)
+    const close = AUTO_PAIRS[key]
+
+    // 1) 选区包裹：选中文字时按配对开符 → 用开/闭符包住选区
+    if (close && hasSelection) {
+      const { start, end } = selectionOffsets(block.el)
+      if (end > start) {
+        e.preventDefault()
+        this.wrap(key, close)
+        return true
+      }
+    }
+    if (hasSelection) return false
+
+    const offset = getCaretOffset(block.el)
+    const raw = block.el.textContent ?? ''
+
+    // 2) 自动补括号：( [ { → 插入配对，光标落中间
+    if (close && AUTO_CLOSE.has(key)) {
+      e.preventDefault()
+      block.raw = raw.slice(0, offset) + key + close + raw.slice(offset)
+      this.paint(block)
+      this.placeCaret(block, offset + 1)
+      this.emitChange()
+      return true
+    }
+
+    // 3) 输入闭括号且右侧已是同样闭括号 → 跳过，不再多插
+    if (AUTO_CLOSERS.has(key) && raw[offset] === key) {
+      e.preventDefault()
+      this.placeCaret(block, offset + 1)
+      return true
+    }
+
+    // 4) 退格删空配对：(|) [|] {|} 一起删
+    if (key === 'Backspace' && offset > 0) {
+      const left = raw[offset - 1]
+      if (AUTO_CLOSE.has(left) && AUTO_PAIRS[left] === raw[offset]) {
+        e.preventDefault()
+        block.raw = raw.slice(0, offset - 1) + raw.slice(offset + 1)
+        this.paint(block)
+        this.placeCaret(block, offset - 1)
+        this.emitChange()
+        return true
+      }
+    }
+
+    return false
   }
 
   private onClick = (e: MouseEvent): void => {

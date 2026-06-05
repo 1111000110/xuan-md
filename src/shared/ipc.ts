@@ -29,6 +29,8 @@ export type ActionName =
   | 'closeTab'
   | 'find'
   | 'exportPdf'
+  | 'undo'
+  | 'redo'
   | 'selectAll'
   | 'copy'
   | 'cut'

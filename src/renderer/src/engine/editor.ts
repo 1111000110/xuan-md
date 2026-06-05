@@ -88,6 +88,8 @@ export class Editor {
   private selectAnchor = 0
   /** 本轮 Cmd+A 是否从表格单元格起步（决定层级：本格→整表→模块→全文） */
   private selectStartedInCell = false
+  /** 本轮 Cmd+A 是否从代码块内起步（决定层级：本行→整块代码→模块→全文） */
+  private selectStartedInCode = false
   /** 表格右键菜单的浮层 */
   private tableMenu: HTMLElement | null = null
   /** 当前文档路径（用于图片相对路径解析 + 选择图片保存目录） */
@@ -214,6 +216,7 @@ export class Editor {
     // ── 起步（第一次 Cmd+A）──
     if (this.selectCycle === 0) {
       this.selectStartedInCell = !!cell
+      this.selectStartedInCode = false
       if (cell) {
         // 表格内：先选中本单元格内容
         const tb = this.blockFromNode(cell)
@@ -226,6 +229,10 @@ export class Editor {
       } else {
         const active = this.activeBlock()
         this.selectAnchor = active ? this.indexOf(active) : 0
+        // 仅「已闭合」的代码块才作为整体单位；未闭合时按普通文本走模块/全文层级，
+        // 避免未闭合代码块把后文都算作代码而第二次就圈到文末。
+        this.selectStartedInCode =
+          this.blocks[this.selectAnchor]?.code != null && this.codeBlockClosed(this.selectAnchor)
         this.clearBlockSelection()
         this.selectBlockText(this.selectAnchor)
       }
@@ -240,8 +247,19 @@ export class Editor {
       return
     }
 
-    // ── 模块（相邻非空块）：非表格在第二次、表格在第三次 ──
-    const moduleStep = this.selectStartedInCell ? 2 : 1
+    // ── 代码块路径第二次：整块选中该代码块（围栏到围栏，作为一个单位）──
+    if (this.selectStartedInCode && this.selectCycle === 1) {
+      const [from, to] = this.codeBlockRange(this.selectAnchor)
+      if (to > from) {
+        this.applyBlockSelection(from, to)
+        this.selectCycle = 2
+        return
+      }
+      // 单行代码块：落到模块/全文
+    }
+
+    // ── 模块（相邻非空块）：普通在第二次；表格/代码块在第三次 ──
+    const moduleStep = this.selectStartedInCell || this.selectStartedInCode ? 2 : 1
     if (this.selectCycle === moduleStep) {
       const [from, to] = this.moduleRange(this.selectAnchor)
       if (to > from) {
@@ -256,6 +274,32 @@ export class Editor {
     if (n > 1) this.applyBlockSelection(0, n - 1)
     else this.selectBlockText(0)
     this.selectCycle = moduleStep + 1
+  }
+
+  /** 锚点所在代码块的整块区间（本块的 open 围栏 → close 围栏，止于本块边界） */
+  private codeBlockRange(idx: number): [number, number] {
+    let from = idx
+    while (from > 0 && this.blocks[from].code?.role !== 'open' && this.blocks[from - 1].code) from--
+    let to = idx
+    while (
+      to < this.blocks.length - 1 &&
+      this.blocks[to].code?.role !== 'close' &&
+      this.blocks[to + 1].code
+    )
+      to++
+    return [from, to]
+  }
+
+  /** 锚点所在代码块是否已闭合（向前找到 open，再向后能遇到 close 围栏） */
+  private codeBlockClosed(idx: number): boolean {
+    let from = idx
+    while (from > 0 && this.blocks[from].code?.role !== 'open' && this.blocks[from - 1].code) from--
+    for (let i = from; i < this.blocks.length; i++) {
+      const c = this.blocks[i].code
+      if (!c) break
+      if (c.role === 'close' && i > from) return true
+    }
+    return false
   }
 
   /** 锚点所在「模块」：以空行为界，向两侧扩展的连续非空块区间 */
@@ -1167,8 +1211,9 @@ export class Editor {
     bar.input.select()
     // 浮层打开期间，编辑器滚动时重定位高亮框
     if (!this.onDocScroll) {
+      // 滚动容器是祖先 #app，故监听 window 捕获阶段才能接住任意元素的滚动
       this.onDocScroll = () => this.positionHighlight()
-      this.root.addEventListener('scroll', this.onDocScroll, true)
+      window.addEventListener('scroll', this.onDocScroll, true)
     }
   }
 
@@ -1177,7 +1222,7 @@ export class Editor {
     this.clearHighlight()
     this.findMatches = []
     if (this.onDocScroll) {
-      this.root.removeEventListener('scroll', this.onDocScroll, true)
+      window.removeEventListener('scroll', this.onDocScroll, true)
       this.onDocScroll = null
     }
     this.focus()
@@ -1232,6 +1277,12 @@ export class Editor {
       return this.clearHighlight()
     }
     if (!rect.width && !rect.height) return this.clearHighlight()
+    // 命中滚出编辑可视区时隐藏高亮框，避免漂在空白处或盖住标签栏
+    const scroller = document.getElementById('app')
+    if (scroller) {
+      const band = scroller.getBoundingClientRect()
+      if (rect.bottom <= band.top || rect.top >= band.bottom) return this.clearHighlight()
+    }
     if (!this.findHl) {
       this.findHl = document.createElement('div')
       this.findHl.className = 'find-hl'
@@ -1280,6 +1331,7 @@ export class Editor {
     if (!query) return
     let count = 0
     const cs = this.findCaseSensitive
+    const edited: Block[] = []
     for (const block of this.blocks) {
       const hay = cs ? block.raw : block.raw.toLowerCase()
       const needle = cs ? query : query.toLowerCase()
@@ -1298,10 +1350,13 @@ export class Editor {
         count++
       }
       block.raw = out
+      edited.push(block)
     }
     if (count) {
-      // 代码上下文/表格可能随之变化，整篇重绘
-      for (const b of this.computeCodeContext()) this.paint(b)
+      // computeCodeContext 只返回「代码角色变化」的块；被替换文本的块还得自己重绘，
+      // 两者合并去重后逐块重绘（否则模型已更新但 DOM 不刷新 → 看着像没替换）。
+      const codeChanged = this.computeCodeContext()
+      for (const b of new Set([...edited, ...codeChanged])) this.paint(b)
       this.detectAndMergeTables()
       this.emitChange()
     }
@@ -1620,8 +1675,9 @@ export class Editor {
   private handleEnterInCode(block: Block, before: string, after: string): void {
     const idx = this.indexOf(block)
 
-    if (block.code!.role === 'open' && after === '') {
-      // ```lang 后回车：补「空内容行 + 闭合 ```」，光标落在中间
+    if (block.code!.role === 'open' && after === '' && !this.codeBlockClosed(idx)) {
+      // 刚敲完 ```lang（尚无闭合围栏）后回车：补「空内容行 + 闭合 ```」，光标落在中间。
+      // 已有闭合围栏时不再补，否则会多出一个 ``` 把代码块劈开。
       block.raw = before
       const content = this.makeBlock('')
       const close = this.makeBlock('```')

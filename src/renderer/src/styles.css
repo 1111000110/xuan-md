@@ -286,6 +286,13 @@ body.no-outline #outline {
   background: var(--sel-bg);
   border-radius: 4px;
 }
+/* 代码行/围栏的背景选择器（.block.code-line 等）优先级与 .block-selected 相同但更靠后，
+   会盖掉选中色；这里用更高优先级显式让选中的代码块也显示选择背景。 */
+.block.code-line.block-selected,
+.block.code-fence.block-selected,
+.block.fm-line.block-selected {
+  background: var(--sel-bg);
+}
 .block-sel-mode .block {
   caret-color: transparent;
 }
@@ -366,6 +373,8 @@ body.no-outline #outline {
 }
 .replace-row {
   margin-top: 5px;
+  /* 让替换输入框左缘与查找输入框对齐（查找行被左侧 ⌃ 折叠按钮顶开了 toggle 宽 + gap） */
+  padding-left: 24px;
 }
 /* hidden 属性需压过上面的 display:flex（类选择器优先级更高，故显式补一条） */
 .replace-row[hidden] {
@@ -419,7 +428,9 @@ body.no-outline #outline {
   background: transparent;
   color: var(--muted, #999);
   cursor: pointer;
-  padding: 0 4px;
+  width: 20px;
+  padding: 0;
+  text-align: center;
   font-size: 14px;
 }
 /* 当前命中高亮框（覆盖式，不改 DOM，避开 textContent===raw 不变式） */

@@ -1,5 +1,12 @@
 import { contextBridge, ipcRenderer, clipboard } from 'electron'
-import type { OpenResult, WriteResult, SaveAsResult, AppState, ActionName } from '@shared/ipc'
+import type {
+  OpenResult,
+  WriteResult,
+  SaveAsResult,
+  ExportResult,
+  AppState,
+  ActionName
+} from '@shared/ipc'
 
 const api = {
   openFile: (): Promise<OpenResult> => ipcRenderer.invoke('dialog:open'),
@@ -18,6 +25,9 @@ const api = {
 
   saveImage: (bytes: Uint8Array, ext: string, docPath: string | null): Promise<string | null> =>
     ipcRenderer.invoke('image:save', { bytes, ext, docPath }),
+
+  exportPdf: (defaultName: string): Promise<ExportResult> =>
+    ipcRenderer.invoke('export:pdf', { defaultName }),
 
   onAction: (cb: (action: ActionName) => void): void => {
     ipcRenderer.on('action', (_e, action: ActionName) => cb(action))

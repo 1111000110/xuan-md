@@ -1,6 +1,6 @@
-import { ipcMain, BrowserWindow, app } from 'electron'
+import { ipcMain, BrowserWindow, app, dialog } from 'electron'
 import { writeFile, mkdir } from 'fs/promises'
-import { join, dirname } from 'path'
+import { join, dirname, basename } from 'path'
 import { randomBytes } from 'crypto'
 import type { AppState } from '@shared/ipc'
 import { openFileDialog, writeFileTo, saveAsDialog } from './file-io'
@@ -90,4 +90,29 @@ export function registerIpc(): void {
       }
     }
   )
+
+  // 导出 PDF：用当前窗口走 print 媒介渲染（复用已加载的 CSS/字体），保存到用户选定路径。
+  ipcMain.handle('export:pdf', async (e, payload: { defaultName: string }) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    if (!win) return { ok: false, error: 'no window' }
+    try {
+      const base = (payload.defaultName || 'Untitled').replace(/\.(md|markdown)$/i, '')
+      const { canceled, filePath } = await dialog.showSaveDialog(win, {
+        title: '导出为 PDF',
+        defaultPath: `${basename(base)}.pdf`,
+        filters: [{ name: 'PDF', extensions: ['pdf'] }]
+      })
+      if (canceled || !filePath) return { ok: false }
+      const data = await win.webContents.printToPDF({
+        printBackground: true,
+        pageSize: 'A4',
+        margins: { top: 0.6, bottom: 0.6, left: 0.7, right: 0.7 }
+      })
+      await writeFile(filePath, data)
+      return { ok: true, path: filePath }
+    } catch (err) {
+      console.error('export:pdf failed:', err)
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
 }

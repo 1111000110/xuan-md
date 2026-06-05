@@ -1,4 +1,11 @@
-import type { OpenResult, WriteResult, SaveAsResult, AppState, ActionName } from '@shared/ipc'
+import type {
+  OpenResult,
+  WriteResult,
+  SaveAsResult,
+  ExportResult,
+  AppState,
+  ActionName
+} from '@shared/ipc'
 
 export interface XuanApi {
   openFile: () => Promise<OpenResult>
@@ -8,6 +15,7 @@ export interface XuanApi {
   savedForClose: () => void
   writeClipboard: (text: string) => void
   saveImage: (bytes: Uint8Array, ext: string, docPath: string | null) => Promise<string | null>
+  exportPdf: (defaultName: string) => Promise<ExportResult>
   onAction: (cb: (action: ActionName) => void) => void
   onOpenFile: (cb: (data: { path: string; content: string }) => void) => void
 }

@@ -338,6 +338,14 @@ const handlers: Record<ActionName, () => void | Promise<unknown>> = {
   },
   closeTab: () => closeTab(activeId),
   find: () => editor.openFind(),
+  exportPdf: async () => {
+    if (sourceMode) toggleSourceMode() // 切回所见即所得并同步内容，再走 print 渲染
+    editor.closeFind()
+    // 等一帧让 DOM/布局稳定后再交给主进程 printToPDF
+    await new Promise((r) => requestAnimationFrame(() => r(null)))
+    const res = await window.api.exportPdf(fileName())
+    if (res && !res.ok && res.error) window.alert('导出 PDF 失败：' + res.error)
+  },
   selectAll: () => {
     const inp = activeNativeInput()
     if (inp) inp.select()

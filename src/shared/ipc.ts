@@ -9,6 +9,9 @@ export type WriteResult = { ok: true; path: string } | { ok: false; error: strin
 /** 另存为对话框的返回 */
 export type SaveAsResult = { path: string } | null
 
+/** 导出（PDF 等）的返回 */
+export type ExportResult = { ok: true; path: string } | { ok: false; error?: string }
+
 /** 渲染进程上报给主进程的窗口状态（用于标题栏、未保存标记、关窗确认） */
 export interface AppState {
   dirty: boolean
@@ -25,6 +28,7 @@ export type ActionName =
   | 'saveForClose'
   | 'closeTab'
   | 'find'
+  | 'exportPdf'
   | 'selectAll'
   | 'copy'
   | 'cut'

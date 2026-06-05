@@ -38,6 +38,8 @@ export function buildMenu(): void {
         { label: '保存', accelerator: 'CmdOrCtrl+S', click: () => send('save') },
         { label: '另存为…', accelerator: 'CmdOrCtrl+Shift+S', click: () => send('saveAs') },
         { type: 'separator' },
+        { label: '导出为 PDF…', accelerator: 'CmdOrCtrl+Shift+E', click: () => send('exportPdf') },
+        { type: 'separator' },
         { label: '关闭标签页', accelerator: 'CmdOrCtrl+W', click: () => send('closeTab') },
         isMac
           ? { role: 'close', label: '关闭窗口', accelerator: 'CmdOrCtrl+Shift+W' }

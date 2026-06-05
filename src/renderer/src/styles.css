@@ -714,3 +714,78 @@ body.no-outline #outline {
     --hr-color: #4b5057;
   }
 }
+
+/* ── 打印 / 导出 PDF（webContents.printToPDF 走 print 媒介）──
+   置于最后以压过上面的深色变量：导出统一为白底深字的可打印版式。 */
+@media print {
+  :root {
+    --bg: #ffffff;
+    --fg: #222222;
+    --accent: #2f6db0;
+    --muted: #888888;
+    --marker: #c7ccd3;
+    --quote-bar: #d8dbe0;
+    --quote-fg: #555b61;
+    --code-bg: #f1f2f4;
+    --code-fg: #b03a28;
+    --border: #e2e4e8;
+    --sel-bg: transparent;
+    --code-block-bg: #f6f8fa;
+    --hr-color: #d8dbe0;
+  }
+  /* 应用外壳一律不进 PDF */
+  #outline,
+  #tabbar,
+  #statusbar,
+  .find-bar,
+  .find-hl,
+  .source-editor {
+    display: none !important;
+  }
+  /* 即便光标附近本会显示，打印时所有标记符强制隐藏 */
+  .mk {
+    display: none !important;
+  }
+  /* 跨块选择高亮不进 PDF */
+  .block.block-selected,
+  .block.code-line.block-selected,
+  .block.code-fence.block-selected,
+  .block.fm-line.block-selected {
+    background: transparent !important;
+  }
+  /* 让内容自然分页，不被滚动容器裁剪 */
+  html,
+  body,
+  #workarea,
+  #app,
+  .editor-host {
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+  .xuan-editor {
+    width: auto !important;
+    max-width: none !important;
+    padding: 0 !important;
+    color: #222 !important;
+  }
+  /* 背景色（代码块等）需要打印出来 */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  /* 避免标题、代码块、表格被跨页割裂 */
+  .block.h1,
+  .block.h2,
+  .block.h3 {
+    break-after: avoid;
+  }
+  .block.code-line,
+  .block.code-fence,
+  .block.table-block,
+  .block.img-line {
+    break-inside: avoid;
+  }
+}

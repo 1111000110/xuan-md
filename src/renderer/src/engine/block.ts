@@ -22,6 +22,7 @@ export type BlockType =
   | 'ol'
   | 'task'
   | 'hr'
+  | 'comment'
 
 export interface BlockRender {
   type: BlockType
@@ -92,6 +93,10 @@ export function renderBlock(raw: string): BlockRender {
   // 水平分割线：整行 3 个及以上 - / * / _
   if (/^(-{3,}|\*{3,}|_{3,})$/.test(raw)) {
     return { type: 'hr', html: mk(raw), checked: false, indent: 0 }
+  }
+  // 整行 HTML 注释：原样显示但灰显（不解析内部 markdown），导出时排除
+  if (/^\s*<!--.*-->\s*$/.test(raw)) {
+    return { type: 'comment', html: escHtml(raw), checked: false, indent: 0 }
   }
   return { type: 'p', html: renderInline(raw) || '<br>', checked: false, indent: 0 }
 }

@@ -312,6 +312,15 @@ body.no-outline #outline {
   pointer-events: none;
 }
 
+/* ── 整行 HTML 注释：灰显，提示「不会进导出」 ── */
+.block.comment {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  font-style: italic;
+  opacity: 0.8;
+}
+
 /* ── 围栏代码块 ── */
 .block.code-line,
 .block.code-fence {
@@ -733,13 +742,14 @@ body.no-outline #outline {
     --code-block-bg: #f6f8fa;
     --hr-color: #d8dbe0;
   }
-  /* 应用外壳一律不进 PDF */
+  /* 应用外壳一律不进 PDF；HTML 注释同样排除 */
   #outline,
   #tabbar,
   #statusbar,
   .find-bar,
   .find-hl,
-  .source-editor {
+  .source-editor,
+  .block.comment {
     display: none !important;
   }
   /* 即便光标附近本会显示，打印时所有标记符强制隐藏 */

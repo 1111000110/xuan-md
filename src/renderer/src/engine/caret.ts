@@ -28,17 +28,22 @@ export function selectionOffsets(el: HTMLElement): { start: number; end: number 
   return { start, end: start + range.toString().length }
 }
 
-/** 把光标（或选区）设置到 el 内的字符偏移区间 */
-export function setCaretOffset(el: HTMLElement, start: number, end: number = start): void {
-  const sel = window.getSelection()
-  if (!sel) return
+/** 构造覆盖 el 内 [start,end) 字符区间的 Range（不改动当前选区/焦点） */
+export function rangeForOffsets(el: HTMLElement, start: number, end: number = start): Range {
   const a = locate(el, start)
   const b = end === start ? a : locate(el, end)
   const range = document.createRange()
   range.setStart(a.node, a.off)
   range.setEnd(b.node, b.off)
+  return range
+}
+
+/** 把光标（或选区）设置到 el 内的字符偏移区间 */
+export function setCaretOffset(el: HTMLElement, start: number, end: number = start): void {
+  const sel = window.getSelection()
+  if (!sel) return
   sel.removeAllRanges()
-  sel.addRange(range)
+  sel.addRange(rangeForOffsets(el, start, end))
 }
 
 function locate(el: HTMLElement, offset: number): { node: Node; off: number } {

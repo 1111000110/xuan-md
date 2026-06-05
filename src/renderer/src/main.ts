@@ -315,6 +315,17 @@ async function saveAs(): Promise<boolean> {
   return true
 }
 
+// 焦点是否落在原生输入框（查找/替换框、源码 textarea）——
+// 这些场景下，全局菜单快捷键（Cmd+A/C/X、格式化）应作用于输入框本身，
+// 而非劫持去操作富文本编辑器（否则会抢走焦点、把输入漏进文档）。
+function activeNativeInput(): HTMLInputElement | HTMLTextAreaElement | null {
+  const a = document.activeElement
+  if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) {
+    return a as HTMLInputElement | HTMLTextAreaElement
+  }
+  return null
+}
+
 // ── 菜单 / 快捷键动作分发 ────────────────────────────────────────────────────
 const handlers: Record<ActionName, () => void | Promise<unknown>> = {
   new: newDoc,
@@ -326,20 +337,46 @@ const handlers: Record<ActionName, () => void | Promise<unknown>> = {
     if (ok) window.api.savedForClose()
   },
   closeTab: () => closeTab(activeId),
-  find: () => {
-    /* M5：查找替换 */
+  find: () => editor.openFind(),
+  selectAll: () => {
+    const inp = activeNativeInput()
+    if (inp) inp.select()
+    else editor.selectAll()
   },
-  selectAll: () => editor.selectAll(),
-  copy: () => editor.copy(),
-  cut: () => editor.cut(),
-  insertTable: () => editor.insertTable(),
+  copy: () => {
+    if (activeNativeInput()) document.execCommand('copy')
+    else editor.copy()
+  },
+  cut: () => {
+    if (activeNativeInput()) document.execCommand('cut')
+    else editor.cut()
+  },
+  insertTable: () => {
+    if (activeNativeInput()) return
+    editor.insertTable()
+  },
   toggleOutline: () => toggleOutline(),
   toggleSource: () => toggleSourceMode(),
-  'format:bold': () => editor.wrap('**'),
-  'format:italic': () => editor.wrap('*'),
-  'format:strike': () => editor.wrap('~~'),
-  'format:code': () => editor.wrap('`'),
-  'format:link': () => editor.wrap('[', '](url)')
+  'format:bold': () => {
+    if (activeNativeInput()) return
+    editor.wrap('**')
+  },
+  'format:italic': () => {
+    if (activeNativeInput()) return
+    editor.wrap('*')
+  },
+  'format:strike': () => {
+    if (activeNativeInput()) return
+    editor.wrap('~~')
+  },
+  'format:code': () => {
+    if (activeNativeInput()) return
+    editor.wrap('`')
+  },
+  'format:link': () => {
+    if (activeNativeInput()) return
+    editor.wrap('[', '](url)')
+  }
 }
 
 window.api.onAction((action) => {

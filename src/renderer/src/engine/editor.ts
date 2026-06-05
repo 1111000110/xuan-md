@@ -16,7 +16,8 @@ import {
   setCaretOffset,
   selectionOffsets,
   caretClientRect,
-  placeCaretAtPoint
+  placeCaretAtPoint,
+  rangeForOffsets
 } from './caret'
 import {
   type CodeInfo,
@@ -41,6 +42,23 @@ export interface EditorStats {
   words: number
   chars: number
   lines: number
+}
+
+/** 一处查找命中：所在块下标 + 块内字符区间 */
+interface FindMatch {
+  blockIdx: number
+  start: number
+  end: number
+}
+
+/** 查找替换浮层的 DOM 引用集合 */
+interface FindBar {
+  root: HTMLElement
+  input: HTMLInputElement
+  count: HTMLElement
+  replaceRow: HTMLElement
+  replaceInput: HTMLInputElement
+  caseBtn: HTMLElement
 }
 
 interface Block {
@@ -74,6 +92,13 @@ export class Editor {
   private tableMenu: HTMLElement | null = null
   /** 当前文档路径（用于图片相对路径解析 + 选择图片保存目录） */
   private docPath: string | null = null
+  /** 查找替换：浮层 + 状态 */
+  private findBar: FindBar | null = null
+  private findHl: HTMLDivElement | null = null
+  private findMatches: FindMatch[] = []
+  private findCurrent = 0
+  private findCaseSensitive = false
+  private onDocScroll: (() => void) | null = null
 
   constructor(parent: HTMLElement) {
     this.root = document.createElement('div')
@@ -1123,6 +1148,271 @@ export class Editor {
     this.placeCaret(tail, 0)
     for (const b of made) this.paint(b)
     this.emitChange()
+  }
+
+  // ── 查找替换（Cmd+F） ───────────────────────────────────────────────────────
+  /** 打开查找浮层（已开则聚焦并选中输入框内容） */
+  openFind(): void {
+    if (!this.findBar) this.findBar = this.buildFindBar()
+    const bar = this.findBar
+    bar.root.style.display = 'block'
+    // 若编辑器里有选中文本，拿来作为初始查找词（飞书/Typora 行为）
+    const sel = window.getSelection()
+    const selText = sel && !sel.isCollapsed ? sel.toString() : ''
+    if (selText && !selText.includes('\n')) bar.input.value = selText
+    this.runSearch(bar.input.value)
+    if (this.findMatches.length) this.goToMatch(0)
+    this.updateFindUI()
+    bar.input.focus()
+    bar.input.select()
+    // 浮层打开期间，编辑器滚动时重定位高亮框
+    if (!this.onDocScroll) {
+      this.onDocScroll = () => this.positionHighlight()
+      this.root.addEventListener('scroll', this.onDocScroll, true)
+    }
+  }
+
+  closeFind(): void {
+    if (this.findBar) this.findBar.root.style.display = 'none'
+    this.clearHighlight()
+    this.findMatches = []
+    if (this.onDocScroll) {
+      this.root.removeEventListener('scroll', this.onDocScroll, true)
+      this.onDocScroll = null
+    }
+    this.focus()
+  }
+
+  /** 用当前查找词重新计算命中列表（不移动视图） */
+  private runSearch(query: string): void {
+    const matches: FindMatch[] = []
+    if (query) {
+      const q = this.findCaseSensitive ? query : query.toLowerCase()
+      this.blocks.forEach((b, bi) => {
+        const hay = this.findCaseSensitive ? b.raw : b.raw.toLowerCase()
+        let from = 0
+        for (;;) {
+          const idx = hay.indexOf(q, from)
+          if (idx < 0) break
+          matches.push({ blockIdx: bi, start: idx, end: idx + query.length })
+          from = idx + query.length
+        }
+      })
+    }
+    this.findMatches = matches
+    if (this.findCurrent >= matches.length) this.findCurrent = matches.length ? matches.length - 1 : 0
+  }
+
+  /** 滚动到第 idx 个命中并高亮（不抢输入框焦点，保证连续回车跳转） */
+  private goToMatch(idx: number): void {
+    const m = this.findMatches[idx]
+    if (!m) return this.clearHighlight()
+    this.findCurrent = idx
+    const block = this.blocks[m.blockIdx]
+    block.el.scrollIntoView({ block: 'center', inline: 'nearest' })
+    this.positionHighlight()
+  }
+
+  private findStep(dir: 1 | -1): void {
+    if (!this.findMatches.length) return
+    const n = this.findMatches.length
+    this.goToMatch((this.findCurrent + dir + n) % n)
+    this.updateFindUI()
+  }
+
+  /** 把高亮框定位到当前命中处（line 块才有可映射的文本区间） */
+  private positionHighlight(): void {
+    const m = this.findMatches[this.findCurrent]
+    const block = m ? this.blocks[m.blockIdx] : null
+    if (!m || !block || block.kind !== 'line') return this.clearHighlight()
+    let rect: DOMRect
+    try {
+      rect = rangeForOffsets(block.el, m.start, m.end).getBoundingClientRect()
+    } catch {
+      return this.clearHighlight()
+    }
+    if (!rect.width && !rect.height) return this.clearHighlight()
+    if (!this.findHl) {
+      this.findHl = document.createElement('div')
+      this.findHl.className = 'find-hl'
+      document.body.appendChild(this.findHl)
+    }
+    const hl = this.findHl
+    hl.style.display = 'block'
+    hl.style.left = `${rect.left}px`
+    hl.style.top = `${rect.top}px`
+    hl.style.width = `${rect.width}px`
+    hl.style.height = `${rect.height}px`
+  }
+
+  private clearHighlight(): void {
+    if (this.findHl) this.findHl.style.display = 'none'
+  }
+
+  private updateFindUI(msg?: string): void {
+    if (!this.findBar) return
+    const n = this.findMatches.length
+    this.findBar.count.textContent = msg ?? (n ? `${this.findCurrent + 1}/${n}` : '无结果')
+  }
+
+  /** 替换当前命中，并跳到下一处 */
+  private replaceCurrent(repl: string): void {
+    const m = this.findMatches[this.findCurrent]
+    if (!m) return
+    const block = this.blocks[m.blockIdx]
+    if (block.kind !== 'line') return this.findStep(1) // 表格块暂不就地替换，跳过
+    block.raw = block.raw.slice(0, m.start) + repl + block.raw.slice(m.end)
+    this.refreshAfterEdit(block)
+    const query = this.findBar?.input.value ?? ''
+    this.runSearch(query)
+    if (this.findMatches.length) {
+      if (this.findCurrent >= this.findMatches.length) this.findCurrent = 0
+      this.goToMatch(this.findCurrent)
+    } else {
+      this.clearHighlight()
+    }
+    this.updateFindUI()
+  }
+
+  /** 全部替换 */
+  private replaceAll(repl: string): void {
+    const query = this.findBar?.input.value ?? ''
+    if (!query) return
+    let count = 0
+    const cs = this.findCaseSensitive
+    for (const block of this.blocks) {
+      const hay = cs ? block.raw : block.raw.toLowerCase()
+      const needle = cs ? query : query.toLowerCase()
+      if (hay.indexOf(needle) < 0) continue
+      // 大小写敏感时直接 split-join；不敏感时按命中位置逐段重建
+      let out = ''
+      let from = 0
+      for (;;) {
+        const idx = hay.indexOf(needle, from)
+        if (idx < 0) {
+          out += block.raw.slice(from)
+          break
+        }
+        out += block.raw.slice(from, idx) + repl
+        from = idx + query.length
+        count++
+      }
+      block.raw = out
+    }
+    if (count) {
+      // 代码上下文/表格可能随之变化，整篇重绘
+      for (const b of this.computeCodeContext()) this.paint(b)
+      this.detectAndMergeTables()
+      this.emitChange()
+    }
+    this.runSearch(query)
+    this.clearHighlight()
+    this.updateFindUI(`${count} 处已替换`)
+  }
+
+  /** 就地编辑某块后刷新它（含代码上下文连带重绘） */
+  private refreshAfterEdit(block: Block): void {
+    const changed = this.computeCodeContext()
+    this.paint(block)
+    for (const b of changed) if (b !== block) this.paint(b)
+    this.emitChange()
+  }
+
+  private buildFindBar(): FindBar {
+    const el = (tag: string, cls: string): HTMLElement => {
+      const e = document.createElement(tag)
+      e.className = cls
+      return e
+    }
+    const root = el('div', 'find-bar')
+    root.style.display = 'none'
+
+    const findRow = el('div', 'find-row')
+    const toggle = el('button', 'find-toggle') as HTMLButtonElement
+    toggle.textContent = '⌄'
+    toggle.title = '展开替换'
+    const input = document.createElement('input')
+    input.className = 'find-input'
+    input.placeholder = '查找'
+    const count = el('span', 'find-count')
+    count.textContent = '0/0'
+    const prev = el('button', 'find-btn') as HTMLButtonElement
+    prev.textContent = '↑'
+    prev.title = '上一个'
+    const next = el('button', 'find-btn') as HTMLButtonElement
+    next.textContent = '↓'
+    next.title = '下一个'
+    const caseBtn = el('button', 'find-btn find-case') as HTMLButtonElement
+    caseBtn.textContent = 'Aa'
+    caseBtn.title = '区分大小写'
+    const close = el('button', 'find-btn') as HTMLButtonElement
+    close.textContent = '✕'
+    close.title = '关闭 (Esc)'
+    findRow.append(toggle, input, count, prev, next, caseBtn, close)
+
+    const replaceRow = el('div', 'replace-row')
+    replaceRow.hidden = true
+    const replaceInput = document.createElement('input')
+    replaceInput.className = 'find-input'
+    replaceInput.placeholder = '替换为'
+    const replaceOne = el('button', 'find-text-btn') as HTMLButtonElement
+    replaceOne.textContent = '替换'
+    const replaceAll = el('button', 'find-text-btn') as HTMLButtonElement
+    replaceAll.textContent = '全部'
+    replaceRow.append(replaceInput, replaceOne, replaceAll)
+
+    root.append(findRow, replaceRow)
+    document.body.appendChild(root)
+
+    const bar: FindBar = { root, input, count, replaceRow, replaceInput, caseBtn }
+
+    // —— 事件 ——
+    input.addEventListener('input', () => {
+      this.findCurrent = 0
+      this.runSearch(input.value)
+      if (this.findMatches.length) this.goToMatch(0)
+      else this.clearHighlight()
+      this.updateFindUI()
+    })
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        this.findStep(e.shiftKey ? -1 : 1)
+      } else if (e.key === 'Escape') {
+        e.preventDefault()
+        this.closeFind()
+      }
+    })
+    replaceInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        this.replaceCurrent(replaceInput.value)
+      } else if (e.key === 'Escape') {
+        e.preventDefault()
+        this.closeFind()
+      }
+    })
+    prev.addEventListener('click', () => this.findStep(-1))
+    next.addEventListener('click', () => this.findStep(1))
+    close.addEventListener('click', () => this.closeFind())
+    caseBtn.addEventListener('click', () => {
+      this.findCaseSensitive = !this.findCaseSensitive
+      caseBtn.classList.toggle('active', this.findCaseSensitive)
+      this.findCurrent = 0
+      this.runSearch(input.value)
+      if (this.findMatches.length) this.goToMatch(0)
+      else this.clearHighlight()
+      this.updateFindUI()
+    })
+    toggle.addEventListener('click', () => {
+      replaceRow.hidden = !replaceRow.hidden
+      toggle.textContent = replaceRow.hidden ? '⌄' : '⌃'
+      if (!replaceRow.hidden) replaceInput.focus()
+    })
+    replaceOne.addEventListener('click', () => this.replaceCurrent(replaceInput.value))
+    replaceAll.addEventListener('click', () => this.replaceAll(replaceInput.value))
+
+    return bar
   }
 
   /** 复制：跨块选择时写入选区 markdown；否则复制块内原生选区 */

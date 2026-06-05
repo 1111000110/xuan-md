@@ -344,6 +344,95 @@ body.no-outline #outline {
   font-size: 1.04em;
 }
 
+/* ── 查找替换浮层 ── */
+.find-bar {
+  position: fixed;
+  top: 52px;
+  right: 26px;
+  z-index: 50;
+  background: var(--bg, #fff);
+  border: 1px solid var(--border, #e0e0e0);
+  border-radius: 8px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.18);
+  padding: 6px;
+  font-size: 13px;
+  user-select: none;
+}
+.find-row,
+.replace-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.replace-row {
+  margin-top: 5px;
+}
+/* hidden 属性需压过上面的 display:flex（类选择器优先级更高，故显式补一条） */
+.replace-row[hidden] {
+  display: none;
+}
+.find-input {
+  width: 180px;
+  padding: 4px 7px;
+  border: 1px solid var(--border, #ddd);
+  border-radius: 5px;
+  background: var(--code-block-bg, #f7f7f7);
+  color: var(--fg, #222);
+  font-size: 13px;
+  outline: none;
+}
+.find-input:focus {
+  border-color: var(--accent, #4488ee);
+}
+.find-count {
+  min-width: 42px;
+  text-align: center;
+  color: var(--muted, #999);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+.find-btn,
+.find-text-btn {
+  border: none;
+  background: transparent;
+  color: var(--fg, #444);
+  cursor: pointer;
+  border-radius: 5px;
+  padding: 3px 7px;
+  font-size: 13px;
+  line-height: 1.2;
+}
+.find-btn:hover,
+.find-text-btn:hover {
+  background: var(--code-bg, #ececec);
+}
+.find-text-btn {
+  border: 1px solid var(--border, #ddd);
+  font-size: 12px;
+}
+.find-case.active {
+  background: var(--accent, #4488ee);
+  color: #fff;
+}
+.find-toggle {
+  border: none;
+  background: transparent;
+  color: var(--muted, #999);
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: 14px;
+}
+/* 当前命中高亮框（覆盖式，不改 DOM，避开 textContent===raw 不变式） */
+.find-hl {
+  position: fixed;
+  z-index: 49;
+  background: rgba(255, 197, 61, 0.45);
+  border: 1px solid rgba(230, 160, 0, 0.9);
+  border-radius: 2px;
+  pointer-events: none;
+  display: none;
+}
+
 /* ── 图片 ── */
 .block.img-line {
   text-align: center;

@@ -16,6 +16,9 @@ const api = {
 
   writeClipboard: (text: string): void => clipboard.writeText(text),
 
+  saveImage: (bytes: Uint8Array, ext: string, docPath: string | null): Promise<string | null> =>
+    ipcRenderer.invoke('image:save', { bytes, ext, docPath }),
+
   onAction: (cb: (action: ActionName) => void): void => {
     ipcRenderer.on('action', (_e, action: ActionName) => cb(action))
   },

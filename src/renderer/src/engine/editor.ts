@@ -27,6 +27,7 @@ import {
   renderFenceLine
 } from './code'
 import { hasMath, renderMathPreview } from './math'
+import { hasImage, renderImagePreview, extFromMime } from './image'
 import {
   isTableRow,
   isSeparatorRow,
@@ -71,6 +72,8 @@ export class Editor {
   private selectStartedInCell = false
   /** 表格右键菜单的浮层 */
   private tableMenu: HTMLElement | null = null
+  /** 当前文档路径（用于图片相对路径解析 + 选择图片保存目录） */
+  private docPath: string | null = null
 
   constructor(parent: HTMLElement) {
     this.root = document.createElement('div')
@@ -80,6 +83,8 @@ export class Editor {
     this.root.addEventListener('input', this.onInput)
     this.root.addEventListener('keydown', this.onKeydown)
     this.root.addEventListener('paste', this.onPaste)
+    this.root.addEventListener('dragover', this.onDragOver)
+    this.root.addEventListener('drop', this.onDrop)
     this.root.addEventListener('click', this.onClick)
     this.root.addEventListener('contextmenu', this.onContextMenu)
     // 公式块聚焦/失焦时在「源码 / KaTeX 渲染」之间切换
@@ -120,6 +125,16 @@ export class Editor {
     for (const b of this.computeCodeContext()) this.paint(b)
     this.detectAndMergeTables()
     this.emitChange()
+  }
+
+  /** 告知当前文档路径，供图片相对路径解析与保存目录选择 */
+  setDocPath(path: string | null): void {
+    this.docPath = path
+  }
+
+  /** 当前文档所在目录（相对图片路径的解析基准） */
+  private docDir(): string | null {
+    return this.docPath ? this.docPath.replace(/[/\\][^/\\]*$/, '') : null
   }
 
   focus(): void {
@@ -323,6 +338,14 @@ export class Editor {
       block.el.style.paddingLeft = ''
       delete block.el.dataset.bullet
       block.el.innerHTML = renderMathPreview(block.raw)
+      return
+    }
+    // 含图片且当前未聚焦的段落：渲染 <img> 预览（聚焦时回到源码以便编辑）
+    if (r.type === 'p' && hasImage(block.raw) && document.activeElement !== block.el) {
+      block.el.className = 'block img-line'
+      block.el.style.paddingLeft = ''
+      delete block.el.dataset.bullet
+      block.el.innerHTML = renderImagePreview(block.raw, this.docDir())
       return
     }
     block.el.className = 'block ' + r.type + (r.checked ? ' checked' : '')
@@ -941,9 +964,9 @@ export class Editor {
     const block = this.blockFromNode(e.target as Node)
     if (!block) return
     if (block.kind === 'table') return // 表格始终渲染态，编辑发生在单元格内
-    if (!block.code && hasMath(block.raw)) {
+    if (!block.code && (hasMath(block.raw) || hasImage(block.raw))) {
       this.paint(block)
-      // 刚聚焦（显源码）时把光标放到行尾，因为 KaTeX 渲染态无法映射点击位置
+      // 刚聚焦（显源码）时把光标放到行尾，因为渲染态（KaTeX / 图片）无法映射点击位置
       if (document.activeElement === block.el) this.placeCaret(block, block.raw.length)
       return
     }
@@ -969,6 +992,14 @@ export class Editor {
       this.selectCycle = 0
       this.renumberLists()
       this.emitChange()
+      return
+    }
+
+    // 图片粘贴（截图等）：剪贴板里有图片项时优先处理
+    const imgFiles = this.imageFilesFrom(e.clipboardData)
+    if (imgFiles.length) {
+      e.preventDefault()
+      void this.insertImageFiles(imgFiles)
       return
     }
 
@@ -1006,6 +1037,91 @@ export class Editor {
       }
     }
     this.renumberLists()
+    this.emitChange()
+  }
+
+  // ── 图片：粘贴 / 拖拽 → 存盘 → 插入 ─────────────────────────────────────────
+  /** 从剪贴板/拖拽数据里取出图片文件 */
+  private imageFilesFrom(data: DataTransfer | null): File[] {
+    if (!data) return []
+    const out: File[] = []
+    for (const item of Array.from(data.items)) {
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        const f = item.getAsFile()
+        if (f) out.push(f)
+      }
+    }
+    return out
+  }
+
+  private onDragOver = (e: DragEvent): void => {
+    // 含文件时允许放下（否则浏览器默认会用文件导航替换页面）
+    if (e.dataTransfer && Array.from(e.dataTransfer.items).some((i) => i.kind === 'file')) {
+      e.preventDefault()
+    }
+  }
+
+  private onDrop = (e: DragEvent): void => {
+    const files = this.imageFilesFrom(e.dataTransfer)
+    if (!files.length) return
+    e.preventDefault()
+    // 把光标落到放下处所在的块，图片就插在那里
+    const block = this.blockFromNode(e.target as Node)
+    if (block && block.kind === 'line') {
+      block.el.focus()
+    }
+    void this.insertImageFiles(files)
+  }
+
+  /** 存盘每张图片，得到可嵌入的路径后插入为图片块 */
+  private async insertImageFiles(files: File[]): Promise<void> {
+    const target = this.activeBlockOrLast()
+    const embeds: string[] = []
+    for (const f of files) {
+      try {
+        const bytes = new Uint8Array(await f.arrayBuffer())
+        const ext = extFromMime(f.type)
+        const embed = await window.api.saveImage(bytes, ext, this.docPath)
+        if (embed) embeds.push(embed)
+      } catch (err) {
+        console.error('save image failed:', err)
+      }
+    }
+    if (embeds.length) this.insertImageBlocks(target, embeds)
+  }
+
+  private activeBlockOrLast(): Block {
+    const active = document.activeElement
+    const b = active ? this.blockFromNode(active) : null
+    return b ?? this.blocks[this.blocks.length - 1]
+  }
+
+  /** 在 anchor 块后插入若干图片块，并在末尾补空块落焦（使图片块失焦渲染） */
+  private insertImageBlocks(anchorBlock: Block, embeds: string[]): void {
+    const made: Block[] = []
+    let anchor = anchorBlock
+    let idx = this.indexOf(anchorBlock)
+    const list = embeds.slice()
+    // 当前块为空行时，第一张图直接占用它，避免多出空行
+    if (anchorBlock.kind === 'line' && anchorBlock.raw.trim() === '') {
+      anchorBlock.raw = `![](${list.shift()})`
+      made.push(anchorBlock)
+    }
+    for (const p of list) {
+      const nb = this.makeBlock(`![](${p})`)
+      anchor.el.after(nb.el)
+      this.blocks.splice(idx + 1, 0, nb)
+      idx++
+      anchor = nb
+      made.push(nb)
+    }
+    // 末尾补一个空块并落焦：图片块此刻失焦 → 重绘为预览
+    const tail = this.makeBlock('')
+    anchor.el.after(tail.el)
+    this.blocks.splice(idx + 1, 0, tail)
+    tail.el.focus()
+    this.placeCaret(tail, 0)
+    for (const b of made) this.paint(b)
     this.emitChange()
   }
 

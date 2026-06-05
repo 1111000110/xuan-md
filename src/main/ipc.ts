@@ -1,4 +1,7 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain, BrowserWindow, app } from 'electron'
+import { writeFile, mkdir } from 'fs/promises'
+import { join, dirname } from 'path'
+import { randomBytes } from 'crypto'
 import type { AppState } from '@shared/ipc'
 import { openFileDialog, writeFileTo, saveAsDialog } from './file-io'
 
@@ -60,4 +63,31 @@ export function registerIpc(): void {
     getState(win).forceClose = true
     win.close()
   })
+
+  // 图片落盘：已保存文档存到同目录的 assets/（嵌入相对路径，便于随文档迁移）；
+  // 未保存文档存到 userData/images/（嵌入绝对路径）。返回可写进 markdown 的路径。
+  ipcMain.handle(
+    'image:save',
+    async (_e, payload: { bytes: Uint8Array; ext: string; docPath: string | null }) => {
+      try {
+        const ext = /^[a-z0-9]+$/i.test(payload.ext) ? payload.ext : 'png'
+        const name = `image-${Date.now()}-${randomBytes(3).toString('hex')}.${ext}`
+        let dir: string
+        let embed: string
+        if (payload.docPath) {
+          dir = join(dirname(payload.docPath), 'assets')
+          embed = `assets/${name}`
+        } else {
+          dir = join(app.getPath('userData'), 'images')
+          embed = join(dir, name) // 未保存文档：绝对路径
+        }
+        await mkdir(dir, { recursive: true })
+        await writeFile(join(dir, name), Buffer.from(payload.bytes))
+        return embed
+      } catch (err) {
+        console.error('image:save failed:', err)
+        return null
+      }
+    }
+  )
 }

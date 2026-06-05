@@ -8,6 +8,11 @@ const statusbar = document.getElementById('statusbar') as HTMLElement
 const workarea = document.getElementById('workarea') as HTMLElement
 const outlineEl = document.getElementById('outline') as HTMLElement
 
+// 全窗口兜底：阻止「把文件拖进窗口」时浏览器默认用该文件导航替换页面；
+// 编辑器自身的 drop 处理（插入图片）已先于此执行。
+window.addEventListener('dragover', (e) => e.preventDefault())
+window.addEventListener('drop', (e) => e.preventDefault())
+
 // 顶部标签栏（多文档）—— 放进右侧工作区，左侧是大纲
 const tabbar = document.createElement('div')
 tabbar.id = 'tabbar'
@@ -205,6 +210,7 @@ function loadTab(t: Tab): void {
   ensureWysiwyg()
   activeId = t.id
   currentPath = t.path
+  editor.setDocPath(t.path) // 先告知文档路径，使图片相对路径在初次渲染就能解析
   loading = true
   editor.setContent(t.content)
   loading = false
@@ -296,6 +302,7 @@ async function saveAs(): Promise<boolean> {
   const r = await window.api.saveAs(currentContent(), currentPath ?? 'Untitled.md')
   if (!r) return false
   currentPath = r.path
+  editor.setDocPath(r.path) // 路径已定，图片相对路径解析基准随之更新
   dirty = false
   const t = activeTab()
   if (t) {

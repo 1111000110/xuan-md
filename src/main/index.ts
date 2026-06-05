@@ -1,5 +1,6 @@
-import { app, BrowserWindow, dialog, shell, nativeTheme } from 'electron'
+import { app, BrowserWindow, dialog, shell, nativeTheme, protocol, net } from 'electron'
 import { join } from 'path'
+import { pathToFileURL } from 'url'
 import { readFile } from 'fs/promises'
 import { registerIpc, getState } from './ipc'
 import { buildMenu } from './menu'
@@ -7,6 +8,15 @@ import { applyStartupTheme } from './theme'
 
 let mainWindow: BrowserWindow | null = null
 let pendingOpenPath: string | null = null
+
+// 自定义协议：把本地图片经 xmd://local/<编码后的绝对路径> 提供给渲染层加载，
+// 规避 file:// 在 http/file 源下被 webSecurity 拦截。必须在 app ready 前声明为特权协议。
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'xmd',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true }
+  }
+])
 
 function sendOpenFile(win: BrowserWindow, filePath: string): void {
   readFile(filePath, 'utf-8')
@@ -104,6 +114,12 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
+  // xmd://local/<编码后的绝对路径> → 读取本地文件返回给 <img>
+  protocol.handle('xmd', (request) => {
+    const url = new URL(request.url)
+    const abs = decodeURIComponent(url.pathname.replace(/^\//, ''))
+    return net.fetch(pathToFileURL(abs).toString())
+  })
   applyStartupTheme() // 套用上次选择的主题（默认浅色）
   registerIpc()
   buildMenu()

@@ -344,6 +344,23 @@ body.no-outline #outline {
   font-size: 1.04em;
 }
 
+/* ── 图片 ── */
+.block.img-line {
+  text-align: center;
+}
+.md-img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  vertical-align: middle;
+  /* 失焦预览态下点击图片即聚焦该行 → 切回源码编辑，这里给个可点提示 */
+  cursor: default;
+}
+.block.img-line .md-img {
+  margin: 0.3em 0;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
+}
+
 /* ── Front Matter（文档头部 ---…--- 的 YAML 元信息） ── */
 .block.fm-line {
   background: var(--code-block-bg);

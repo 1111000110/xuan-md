@@ -7,6 +7,7 @@ export interface XuanApi {
   updateState: (state: AppState) => void
   savedForClose: () => void
   writeClipboard: (text: string) => void
+  saveImage: (bytes: Uint8Array, ext: string, docPath: string | null) => Promise<string | null>
   onAction: (cb: (action: ActionName) => void) => void
   onOpenFile: (cb: (data: { path: string; content: string }) => void) => void
 }

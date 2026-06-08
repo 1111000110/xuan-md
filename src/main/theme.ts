@@ -1,28 +1,7 @@
-import { nativeTheme, app } from 'electron'
-import { readFileSync, writeFileSync } from 'fs'
-import { join } from 'path'
+import { nativeTheme } from 'electron'
+import { readSettings, writeSettings } from './settings'
 
 export type ThemeChoice = 'light' | 'dark' | 'system'
-
-function settingsPath(): string {
-  return join(app.getPath('userData'), 'settings.json')
-}
-
-function readSettings(): Record<string, unknown> {
-  try {
-    return JSON.parse(readFileSync(settingsPath(), 'utf-8'))
-  } catch {
-    return {}
-  }
-}
-
-function writeSettings(data: Record<string, unknown>): void {
-  try {
-    writeFileSync(settingsPath(), JSON.stringify(data, null, 2))
-  } catch {
-    /* 持久化失败可忽略 */
-  }
-}
 
 /** 当前主题选择（默认浅色） */
 export function currentTheme(): ThemeChoice {

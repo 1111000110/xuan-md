@@ -1,5 +1,5 @@
 import { ipcMain, BrowserWindow, app, dialog } from 'electron'
-import { writeFile, mkdir } from 'fs/promises'
+import { writeFile, mkdir, access } from 'fs/promises'
 import { join, dirname, basename } from 'path'
 import { randomBytes } from 'crypto'
 import type { AppState } from '@shared/ipc'
@@ -34,6 +34,15 @@ export function registerIpc(): void {
 
   ipcMain.handle('file:write', async (_e, payload: { filePath: string; content: string }) => {
     return writeFileTo(payload.filePath, payload.content)
+  })
+
+  ipcMain.handle('file:exists', async (_e, filePath: string) => {
+    try {
+      await access(filePath)
+      return true
+    } catch {
+      return false
+    }
   })
 
   ipcMain.handle(

@@ -40,6 +40,9 @@ export function buildMenu(): void {
         { type: 'separator' },
         { label: '导出为 PDF…', accelerator: 'CmdOrCtrl+Shift+E', click: () => send('exportPdf') },
         { type: 'separator' },
+        { label: '添加当前文档到速记面板（⌘⇧O 唤起）', click: () => send('addQuickDoc') },
+        { label: '清空速记面板', click: () => send('clearQuickDocs') },
+        { type: 'separator' },
         { label: '关闭标签页', accelerator: 'CmdOrCtrl+W', click: () => send('closeTab') },
         isMac
           ? { role: 'close', label: '关闭窗口', accelerator: 'CmdOrCtrl+Shift+W' }
@@ -54,7 +57,7 @@ export function buildMenu(): void {
         { type: 'separator' },
         { label: '剪切', accelerator: 'CmdOrCtrl+X', click: () => send('cut') },
         { label: '复制', accelerator: 'CmdOrCtrl+C', click: () => send('copy') },
-        { role: 'paste', label: '粘贴' },
+        { label: '粘贴', accelerator: 'CmdOrCtrl+V', click: () => send('paste') },
         { label: '全选', accelerator: 'CmdOrCtrl+A', click: () => send('selectAll') },
         { type: 'separator' },
         { label: '查找', accelerator: 'CmdOrCtrl+F', click: () => send('find') }

@@ -120,10 +120,15 @@ export class Editor {
   private selectStartedInCell = false
   /** 本轮 Cmd+A 是否从代码块内起步（决定层级：本行→整块代码→模块→全文） */
   private selectStartedInCode = false
+  /** 鼠标拖拽跨块选择：按下时的锚点块下标；刚靠拖拽形成选区时为 true（避免随后的 click 清掉） */
+  private mouseAnchorIdx: number | null = null
+  private dragSelected = false
   /** 表格右键菜单的浮层 */
   private tableMenu: HTMLElement | null = null
   /** 当前文档路径（用于图片相对路径解析 + 选择图片保存目录） */
   private docPath: string | null = null
+  /** 只读模式（速记面板查看用）：块不可编辑、不接管键盘/粘贴/拖拽 */
+  private readOnly = false
   /** 撤销/重做历史（自维护，因为每次输入都重置 innerHTML 会清掉浏览器原生撤销栈） */
   private undoStack: HistorySnapshot[] = []
   private redoStack: HistorySnapshot[] = []
@@ -152,6 +157,10 @@ export class Editor {
     this.root.addEventListener('dragover', this.onDragOver)
     this.root.addEventListener('drop', this.onDrop)
     this.root.addEventListener('click', this.onClick)
+    // 跨块鼠标拖拽选择（原生选区无法跨多个 contenteditable，故自行整块选中）
+    this.root.addEventListener('mousedown', this.onMouseDown)
+    this.root.addEventListener('mousemove', this.onMouseMove)
+    document.addEventListener('mouseup', this.onMouseUp)
     // 两侧空白（文本列以外的 editor-host 区域）点击 → 就近聚焦
     this.host.addEventListener('click', this.onHostClick)
     this.root.addEventListener('contextmenu', this.onContextMenu)
@@ -209,6 +218,11 @@ export class Editor {
   /** 告知当前文档路径，供图片相对路径解析与保存目录选择 */
   setDocPath(path: string | null): void {
     this.docPath = path
+  }
+
+  /** 设为只读（须在 setContent 前调用）：块不可编辑、可选中复制 */
+  setReadOnly(value: boolean): void {
+    this.readOnly = value
   }
 
   /** 当前文档所在目录（相对图片路径的解析基准） */
@@ -383,11 +397,15 @@ export class Editor {
     for (let i = from; i <= to; i++) this.blocks[i].el.classList.add('block-selected')
     this.root.classList.add('block-sel-mode')
     const anchorIdx = Math.min(Math.max(this.selectAnchor, from), to)
-    const anchorEl = this.blocks[anchorIdx].el
+    const anchorBlock = this.blocks[anchorIdx]
+    const anchorEl = anchorBlock.el
     // 表格块本身 contenteditable=false，需临时可聚焦才能接收 Delete 等按键
     if (anchorEl.contentEditable !== 'true' && anchorEl.tabIndex < 0) anchorEl.tabIndex = -1
     anchorEl.focus()
     window.getSelection()?.removeAllRanges()
+    // 在锚点放一个折叠光标（block-sel-mode 下 caret 透明、看不见），让原生「粘贴」
+    // 有插入点从而触发 paste 事件 —— 否则 Cmd+A 全选后 Cmd+V 不生效。
+    if (anchorBlock.kind === 'line') setCaretOffset(anchorEl, 0)
   }
 
   private clearBlockSelection(): void {
@@ -428,7 +446,7 @@ export class Editor {
   // ── 块的创建与渲染 ───────────────────────────────────────────────────────────
   private makeBlock(raw: string): Block {
     const el = document.createElement('div')
-    el.contentEditable = 'true'
+    el.contentEditable = this.readOnly ? 'false' : 'true'
     el.spellcheck = false
     const block: Block = { id: this.nextId++, raw, el, code: null, kind: 'line' }
     this.paint(block)
@@ -483,6 +501,11 @@ export class Editor {
     block.el.contentEditable = 'false' // 块本身不可编辑，编辑发生在各单元格
     block.el.className = 'block table-block'
     block.el.innerHTML = renderEditableTable(block.raw)
+    if (this.readOnly) {
+      block.el
+        .querySelectorAll('[contenteditable]')
+        .forEach((c) => ((c as HTMLElement).contentEditable = 'false'))
+    }
   }
 
   private paintCode(block: Block): void {
@@ -1007,6 +1030,7 @@ export class Editor {
   }
 
   private onSelectionChange = (): void => {
+    if (this.readOnly || this.blockSelection) return // 只读 / 跨块选择：不动标记符
     this.syncMarkers()
   }
 
@@ -1038,6 +1062,7 @@ export class Editor {
 
   // ── 事件处理 ────────────────────────────────────────────────────────────────
   private onInput = (e: Event): void => {
+    if (this.readOnly) return
     if (this.composing || this.blockSelection) return
     this.selectCycle = 0
     const cell = this.cellFromNode(e.target as Node)
@@ -1054,6 +1079,7 @@ export class Editor {
   }
 
   private onKeydown = (e: KeyboardEvent): void => {
+    if (this.readOnly) return // 只读：不接管任何按键（块本就不可编辑）
     // 输入法合成期间不接管任何按键（回车确认候选、退格删拼音都交给 IME）
     if (this.composing || e.isComposing) return
     if (this.blockSelection) {
@@ -1167,7 +1193,63 @@ export class Editor {
     return false
   }
 
+  // ── 跨块鼠标拖拽选择 ─────────────────────────────────────────────────────────
+  /** 点击纵坐标所在（或最近）的块下标 */
+  private blockIndexAtY(y: number): number {
+    let best = this.blocks.length - 1
+    let bestDist = Infinity
+    for (let i = 0; i < this.blocks.length; i++) {
+      const r = this.blocks[i].el.getBoundingClientRect()
+      if (y >= r.top && y <= r.bottom) return i
+      const d = y < r.top ? r.top - y : y - r.bottom
+      if (d < bestDist) {
+        bestDist = d
+        best = i
+      }
+    }
+    return best
+  }
+
+  private onMouseDown = (e: MouseEvent): void => {
+    this.dragSelected = false
+    if (e.button !== 0 || this.readOnly) {
+      this.mouseAnchorIdx = null
+      return
+    }
+    const block = this.blockFromNode(e.target as Node)
+    this.mouseAnchorIdx = block ? this.indexOf(block) : this.blockIndexAtY(e.clientY)
+  }
+
+  private onMouseMove = (e: MouseEvent): void => {
+    if (this.mouseAnchorIdx == null || (e.buttons & 1) === 0) return
+    const idx = this.blockIndexAtY(e.clientY)
+    if (idx === this.mouseAnchorIdx) {
+      // 仍在同一块内：交给原生选区（可选中行内局部），清掉可能的块选
+      if (this.blockSelection) this.clearBlockSelection()
+      return
+    }
+    const from = Math.min(this.mouseAnchorIdx, idx)
+    const to = Math.max(this.mouseAnchorIdx, idx)
+    if (this.blockSelection && this.blockSelection.from === from && this.blockSelection.to === to) {
+      e.preventDefault()
+      return
+    }
+    this.selectAnchor = this.mouseAnchorIdx
+    this.applyBlockSelection(from, to)
+    this.dragSelected = true
+    e.preventDefault()
+  }
+
+  private onMouseUp = (): void => {
+    this.mouseAnchorIdx = null
+  }
+
   private onClick = (e: MouseEvent): void => {
+    // 刚靠拖拽形成的块选：本次 click 不要清掉它
+    if (this.dragSelected) {
+      this.dragSelected = false
+      return
+    }
     const target = e.target as HTMLElement
     // 表格增行 / 增列按钮
     if (target.classList.contains('tbl-add-row') || target.classList.contains('tbl-add-col')) {
@@ -1249,26 +1331,13 @@ export class Editor {
   }
 
   private onPaste = (e: ClipboardEvent): void => {
+    if (this.readOnly) return
     // 跨块选择下：粘贴内容替换整个选区
     if (this.blockSelection) {
       e.preventDefault()
-      const parts = (e.clipboardData?.getData('text/plain') ?? '').split('\n')
-      const { from, to } = this.blockSelection
-      const next = this.blocks[to].el.nextElementSibling
-      for (let i = from; i <= to; i++) this.blocks[i].el.remove()
-      const made = parts.map((p) => this.makeBlock(p))
-      this.blocks.splice(from, to - from + 1, ...made)
-      for (const b of made) this.root.insertBefore(b.el, next)
-      this.clearBlockSelection()
-      const last = made[made.length - 1]
-      last.el.focus()
-      this.placeCaret(last, last.raw.length)
-      this.selectCycle = 0
-      this.renumberLists()
-      this.emitChange()
+      this.pasteOverSelection(e.clipboardData?.getData('text/plain') ?? '')
       return
     }
-
     // 图片粘贴（截图等）：剪贴板里有图片项时优先处理
     const imgFiles = this.imageFilesFrom(e.clipboardData)
     if (imgFiles.length) {
@@ -1276,18 +1345,62 @@ export class Editor {
       void this.insertImageFiles(imgFiles)
       return
     }
-
     const block = this.blockFromNode(e.target as Node)
     if (!block) return
     e.preventDefault()
     const text = e.clipboardData?.getData('text/plain') ?? ''
-    if (!text) return
-    const parts = text.split('\n')
-    const offset = getCaretOffset(block.el)
-    const raw = block.el.textContent ?? ''
-    const head = raw.slice(0, offset)
-    const tail = raw.slice(offset)
+    if (text) this.pasteTextAtCaret(block, text)
+  }
 
+  /** 菜单/快捷键「粘贴」。跨块全选时自行用剪贴板文本替换（无原生光标，原生粘贴会失效）；
+   *  其余情形一律交给原生粘贴（图片 / 表格单元格 / 行内插入都走 onPaste，最稳）。 */
+  paste(): void {
+    try {
+      if (this.blockSelection) {
+        this.pasteOverSelection(window.api.readClipboard())
+        return
+      }
+      const text = window.api.readClipboard()
+      const block = this.activeBlock()
+      if (text && block && block.kind === 'line') {
+        this.pasteTextAtCaret(block, text)
+        return
+      }
+    } catch (err) {
+      console.error('paste failed, fall back to native:', err)
+    }
+    // 兜底：原生粘贴（图片 / 表格单元格 / 无文本 / 出错）→ 触发 onPaste 或浏览器默认
+    document.execCommand('paste')
+  }
+
+  /** 用文本替换当前跨块选区（多行拆成多块） */
+  private pasteOverSelection(text: string): void {
+    if (!this.blockSelection) return
+    const parts = text.split('\n')
+    const { from, to } = this.blockSelection
+    const next = this.blocks[to].el.nextElementSibling
+    for (let i = from; i <= to; i++) this.blocks[i].el.remove()
+    const made = parts.map((p) => this.makeBlock(p))
+    this.blocks.splice(from, to - from + 1, ...made)
+    for (const b of made) this.root.insertBefore(b.el, next)
+    this.clearBlockSelection()
+    const last = made[made.length - 1]
+    last.el.focus()
+    this.placeCaret(last, last.raw.length)
+    this.selectCycle = 0
+    this.renumberLists()
+    this.emitChange()
+  }
+
+  /** 在某块光标处插入文本（多行拆块）；若块内有选区，则替换选区 */
+  private pasteTextAtCaret(block: Block, text: string): void {
+    const parts = text.split('\n')
+    // 用选区起止：折叠光标时 start===end（普通插入），有选区时覆盖 [start,end)
+    const { start, end } = selectionOffsets(block.el)
+    const offset = start
+    const raw = block.el.textContent ?? ''
+    const head = raw.slice(0, start)
+    const tail = raw.slice(end)
     if (parts.length === 1) {
       block.raw = head + parts[0] + tail
       this.paint(block)
@@ -1314,6 +1427,7 @@ export class Editor {
     this.emitChange()
   }
 
+
   // ── 图片：粘贴 / 拖拽 → 存盘 → 插入 ─────────────────────────────────────────
   /** 从剪贴板/拖拽数据里取出图片文件 */
   private imageFilesFrom(data: DataTransfer | null): File[] {
@@ -1336,6 +1450,7 @@ export class Editor {
   }
 
   private onDrop = (e: DragEvent): void => {
+    if (this.readOnly) return
     const files = this.imageFilesFrom(e.dataTransfer)
     if (!files.length) return
     e.preventDefault()
@@ -1757,8 +1872,8 @@ export class Editor {
 
   /** 跨块选择激活时的键盘处理 */
   private handleBlockSelectionKey(e: KeyboardEvent): void {
-    // Cmd+C/X 交给 copy/cut 事件，Cmd+A 由菜单 action 处理
-    if ((e.metaKey || e.ctrlKey) && /^[cxaA]$/.test(e.key)) return
+    // Cmd+C/X 复制剪切、Cmd+A 全选、Cmd+V 粘贴：都交给菜单 action，别在这儿 preventDefault
+    if ((e.metaKey || e.ctrlKey) && /^[cxav]$/i.test(e.key)) return
     if (e.key === 'Meta' || e.key === 'Control' || e.key === 'Shift' || e.key === 'Alt') return
 
     const sel = this.blockSelection!

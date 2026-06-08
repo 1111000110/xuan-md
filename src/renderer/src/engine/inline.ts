@@ -35,6 +35,11 @@ function findSingle(text: string, from: number, ch: string): number {
   return -1
 }
 
+/** 是否字母或数字（含 CJK 等）。用于下划线的「词边界」判定 */
+function isAlnum(ch: string | undefined): boolean {
+  return !!ch && /[\p{L}\p{N}]/u.test(ch)
+}
+
 export function renderInline(text: string): string {
   let out = ''
   let plain = ''
@@ -62,11 +67,11 @@ export function renderInline(text: string): string {
       }
     }
 
-    // 加粗 **text** / __text__
+    // 加粗 **text** / __text__（下划线变体要求词边界，避免 a__b__c 被当成加粗）
     if ((c === '*' || c === '_') && text[i + 1] === c) {
       const delim = c + c
       const end = text.indexOf(delim, i + 2)
-      if (end >= i + 3) {
+      if (end >= i + 3 && (c !== '_' || (!isAlnum(text[i - 1]) && !isAlnum(text[end + 2])))) {
         flush()
         out += wrapMd(mk(delim) + `<strong>${renderInline(text.slice(i + 2, end))}</strong>` + mk(delim))
         i = end + 2
@@ -85,10 +90,10 @@ export function renderInline(text: string): string {
       }
     }
 
-    // 斜体 *text* / _text_
+    // 斜体 *text* / _text_（下划线变体要求词边界，避免 MOCK_LOGIN_XG 被当成斜体）
     if (c === '*' || c === '_') {
       const end = findSingle(text, i + 1, c)
-      if (end > i + 1) {
+      if (end > i + 1 && (c !== '_' || (!isAlnum(text[i - 1]) && !isAlnum(text[end + 1])))) {
         flush()
         out += wrapMd(mk(c) + `<em>${renderInline(text.slice(i + 1, end))}</em>` + mk(c))
         i = end + 1

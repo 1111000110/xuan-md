@@ -289,6 +289,14 @@ async function openDoc(): Promise<void> {
 
 async function save(): Promise<boolean> {
   if (!currentPath) return saveAs()
+  // 原文件被外部改名/移动/删除时，别闷头在旧路径重建一个，先问一下
+  const exists = await window.api.fileExists(currentPath)
+  if (!exists) {
+    const relocate = window.confirm(
+      `原文件「${fileName()}」已不在原位置（可能被改名、移动或删除）。\n\n点「确定」重新选择保存位置；点「取消」仍按原路径新建一个。`
+    )
+    if (relocate) return saveAs()
+  }
   const r = await window.api.writeFile(currentPath, currentContent())
   if (r.ok) {
     setDirty(false)
@@ -326,6 +334,16 @@ function activeNativeInput(): HTMLInputElement | HTMLTextAreaElement | null {
   return null
 }
 
+/** 把 Electron 加速键串（CommandOrControl+Shift+O）转成易读的符号（⌘⇧O） */
+function fmtShortcut(s: string): string {
+  return s
+    .replace(/CommandOrControl|CmdOrCtrl|Command|Cmd/g, '⌘')
+    .replace(/Shift/g, '⇧')
+    .replace(/Alt|Option/g, '⌥')
+    .replace(/Control|Ctrl/g, '⌃')
+    .replace(/\+/g, '')
+}
+
 // ── 菜单 / 快捷键动作分发 ────────────────────────────────────────────────────
 const handlers: Record<ActionName, () => void | Promise<unknown>> = {
   new: newDoc,
@@ -354,6 +372,26 @@ const handlers: Record<ActionName, () => void | Promise<unknown>> = {
     const res = await window.api.exportPdf(fileName())
     if (res && !res.ok && res.error) window.alert('导出 PDF 失败：' + res.error)
   },
+  addQuickDoc: async () => {
+    if (!currentPath) {
+      window.alert('请先保存当前文档，再加入速记面板。')
+      return
+    }
+    const res = await window.api.addQuickDoc(currentPath)
+    if (res.ok) {
+      window.alert(
+        `已加入速记面板（共 ${res.count ?? 1} 个）。\n在任意位置按 ${fmtShortcut(res.shortcut || '')} 唤起面板，列表里点开即可查看/复制。`
+      )
+    } else {
+      window.alert(
+        `全局快捷键 ${fmtShortcut(res.shortcut || '')} 注册失败（可能被其他应用占用）。\n可在 settings.json 里改 quick.shortcut 后重试。`
+      )
+    }
+  },
+  clearQuickDocs: async () => {
+    await window.api.clearQuickDocs()
+    window.alert('已清空速记面板。')
+  },
   selectAll: () => {
     const inp = activeNativeInput()
     if (inp) inp.select()
@@ -366,6 +404,10 @@ const handlers: Record<ActionName, () => void | Promise<unknown>> = {
   cut: () => {
     if (activeNativeInput()) document.execCommand('cut')
     else editor.cut()
+  },
+  paste: () => {
+    if (activeNativeInput()) document.execCommand('paste')
+    else editor.paste()
   },
   insertTable: () => {
     if (activeNativeInput()) return

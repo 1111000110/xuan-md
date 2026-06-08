@@ -16,8 +16,7 @@ import {
   setCaretOffset,
   selectionOffsets,
   caretClientRect,
-  placeCaretAtPoint,
-  rangeForOffsets
+  placeCaretAtPoint
 } from './caret'
 import {
   type CodeInfo,
@@ -132,6 +131,8 @@ export class Editor {
   /** 查找替换：浮层 + 状态 */
   private findBar: FindBar | null = null
   private findHl: HTMLDivElement | null = null
+  /** 当前命中在渲染 DOM 里的 Range（缓存，滚动时复用以重定位高亮框） */
+  private findHlRange: Range | null = null
   private findMatches: FindMatch[] = []
   private findCurrent = 0
   private findCaseSensitive = false
@@ -1375,7 +1376,7 @@ export class Editor {
     // 浮层打开期间，编辑器滚动时重定位高亮框
     if (!this.onDocScroll) {
       // 滚动容器是祖先 #app，故监听 window 捕获阶段才能接住任意元素的滚动
-      this.onDocScroll = () => this.positionHighlight()
+      this.onDocScroll = () => this.showHighlight()
       window.addEventListener('scroll', this.onDocScroll, true)
     }
   }
@@ -1417,8 +1418,15 @@ export class Editor {
     if (!m) return this.clearHighlight()
     this.findCurrent = idx
     const block = this.blocks[m.blockIdx]
-    block.el.scrollIntoView({ block: 'center', inline: 'nearest' })
-    this.positionHighlight()
+    if (!block) return this.clearHighlight()
+    // 在「渲染后的 DOM」里按第几次出现来定位命中——这样表格单元格里的命中也能高亮，
+    // 不再依赖 raw 偏移（表格 raw 含 | 与换行，无法映射到渲染后的 <table>）。
+    const query = this.findBar?.input.value ?? ''
+    this.findHlRange = this.rangeForOccurrence(block.el, query, this.occInBlock(idx))
+    // 把命中处滚到可视区（表格很大时滚到具体单元格，而非整张表）
+    const anchorEl = this.findHlRange?.startContainer.parentElement ?? block.el
+    anchorEl.scrollIntoView({ block: 'center', inline: 'nearest' })
+    this.showHighlight()
   }
 
   private findStep(dir: 1 | -1): void {
@@ -1428,23 +1436,70 @@ export class Editor {
     this.updateFindUI()
   }
 
-  /** 把高亮框定位到当前命中处（line 块才有可映射的文本区间） */
-  private positionHighlight(): void {
-    const m = this.findMatches[this.findCurrent]
-    const block = m ? this.blocks[m.blockIdx] : null
-    if (!m || !block || block.kind !== 'line') return this.clearHighlight()
+  /** 当前命中在其所在块内是第几次出现（0 起） */
+  private occInBlock(idx: number): number {
+    const bi = this.findMatches[idx]?.blockIdx
+    let occ = 0
+    for (let i = 0; i < idx; i++) if (this.findMatches[i].blockIdx === bi) occ++
+    return occ
+  }
+
+  /** 在 root 的渲染文本中定位第 occ 次出现的查询词，返回其 Range（找不到则 null） */
+  private rangeForOccurrence(root: HTMLElement, query: string, occ: number): Range | null {
+    if (!query) return null
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+    const nodes: { node: Text; start: number }[] = []
+    let text = ''
+    let nd: Node | null
+    while ((nd = walker.nextNode())) {
+      const t = nd as Text
+      nodes.push({ node: t, start: text.length })
+      text += t.nodeValue ?? ''
+    }
+    const hay = this.findCaseSensitive ? text : text.toLowerCase()
+    const needle = this.findCaseSensitive ? query : query.toLowerCase()
+    let at = -1
+    let from = 0
+    for (let k = 0; k <= occ; k++) {
+      at = hay.indexOf(needle, from)
+      if (at < 0) return null
+      from = at + needle.length
+    }
+    const locate = (pos: number): { node: Text; off: number } | null => {
+      for (let i = nodes.length - 1; i >= 0; i--) {
+        if (pos >= nodes[i].start) return { node: nodes[i].node, off: pos - nodes[i].start }
+      }
+      return null
+    }
+    const a = locate(at)
+    const b = locate(at + query.length)
+    if (!a || !b) return null
+    const range = document.createRange()
+    try {
+      range.setStart(a.node, Math.min(a.off, a.node.length))
+      range.setEnd(b.node, Math.min(b.off, b.node.length))
+    } catch {
+      return null
+    }
+    return range
+  }
+
+  /** 用缓存的命中 Range 定位高亮框（滚动时也调它，开销小） */
+  private showHighlight(): void {
+    const range = this.findHlRange
+    if (!range) return this.hideHighlight()
     let rect: DOMRect
     try {
-      rect = rangeForOffsets(block.el, m.start, m.end).getBoundingClientRect()
+      rect = range.getBoundingClientRect()
     } catch {
-      return this.clearHighlight()
+      return this.hideHighlight()
     }
-    if (!rect.width && !rect.height) return this.clearHighlight()
-    // 命中滚出编辑可视区时隐藏高亮框，避免漂在空白处或盖住标签栏
+    if (!rect.width && !rect.height) return this.hideHighlight()
+    // 命中滚出编辑可视区时隐藏高亮框（保留缓存 Range，滚回可视区再显示）
     const scroller = document.getElementById('app')
     if (scroller) {
       const band = scroller.getBoundingClientRect()
-      if (rect.bottom <= band.top || rect.top >= band.bottom) return this.clearHighlight()
+      if (rect.bottom <= band.top || rect.top >= band.bottom) return this.hideHighlight()
     }
     if (!this.findHl) {
       this.findHl = document.createElement('div')
@@ -1459,8 +1514,15 @@ export class Editor {
     hl.style.height = `${rect.height}px`
   }
 
-  private clearHighlight(): void {
+  /** 仅隐藏高亮框（保留缓存 Range，便于滚回可视区时重新显示） */
+  private hideHighlight(): void {
     if (this.findHl) this.findHl.style.display = 'none'
+  }
+
+  /** 清除高亮：清缓存 Range 并隐藏（查找关闭 / 无结果时用） */
+  private clearHighlight(): void {
+    this.findHlRange = null
+    this.hideHighlight()
   }
 
   private updateFindUI(msg?: string): void {

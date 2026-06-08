@@ -101,6 +101,8 @@ interface Block {
 
 export class Editor {
   private root: HTMLElement
+  /** 外层容器（editor-host）：两侧空白点击落到此元素，用于「就近聚焦」 */
+  private host: HTMLElement
   private blocks: Block[] = []
   private nextId = 1
   private changeCb: (() => void) | null = null
@@ -139,6 +141,7 @@ export class Editor {
   private onDocScroll: (() => void) | null = null
 
   constructor(parent: HTMLElement) {
+    this.host = parent
     this.root = document.createElement('div')
     this.root.className = 'xuan-editor'
     parent.appendChild(this.root)
@@ -149,6 +152,8 @@ export class Editor {
     this.root.addEventListener('dragover', this.onDragOver)
     this.root.addEventListener('drop', this.onDrop)
     this.root.addEventListener('click', this.onClick)
+    // 两侧空白（文本列以外的 editor-host 区域）点击 → 就近聚焦
+    this.host.addEventListener('click', this.onHostClick)
     this.root.addEventListener('contextmenu', this.onContextMenu)
     // 公式块聚焦/失焦时在「源码 / KaTeX 渲染」之间切换
     this.root.addEventListener('focusin', this.onFocusToggle)
@@ -1177,19 +1182,55 @@ export class Editor {
     this.selectCycle = 0
     // 编辑态下点击链接不跳转，只用于定位光标
     if (target.closest('a')) e.preventDefault()
-    // 点击编辑区空白处：在首块上方点 → 聚焦首块开头；否则 → 聚焦末块结尾
-    if (target === this.root) {
-      const first = this.blocks[0]
-      const last = this.blocks[this.blocks.length - 1]
-      if (!first || !last) return
-      const aboveFirst = e.clientY < first.el.getBoundingClientRect().top
-      const block = aboveFirst ? first : last
-      if (block.kind === 'table') {
-        this.focusCell(block, aboveFirst ? -1 : this.tableRowCount(block) - 1, 0)
-      } else {
-        block.el.focus()
-        this.placeCaret(block, aboveFirst ? 0 : block.raw.length)
+    // 点击编辑列内的空白（行间隙 / 左右内边距 / 底部留白）→ 就近聚焦
+    if (target === this.root) this.placeCaretInBlankArea(e.clientX, e.clientY)
+  }
+
+  /** 点击两侧空白（editor-host 自身）→ 就近聚焦 */
+  private onHostClick = (e: MouseEvent): void => {
+    if (e.target !== this.host) return // 只处理点在两侧空白本身的情况
+    if (this.blockSelection) this.clearBlockSelection()
+    this.selectCycle = 0
+    this.placeCaretInBlankArea(e.clientX, e.clientY)
+  }
+
+  /** 把光标落到点击纵坐标最近的那一行（左缘→行首、右缘→行尾），而非一律跳到文末 */
+  private placeCaretInBlankArea(x: number, y: number): void {
+    const blocks = this.blocks
+    const first = blocks[0]
+    const last = blocks[blocks.length - 1]
+    if (!first || !last) return
+    if (y < first.el.getBoundingClientRect().top) return this.focusBlockAt(first, 'start', x, y)
+    if (y > last.el.getBoundingClientRect().bottom) return this.focusBlockAt(last, 'end', x, y)
+    // 找点击 Y 所在（或最近）的块
+    let target = last
+    let best = Infinity
+    for (const b of blocks) {
+      const r = b.el.getBoundingClientRect()
+      if (y >= r.top && y <= r.bottom) {
+        target = b
+        break
       }
+      const d = y < r.top ? r.top - y : y - r.bottom
+      if (d < best) {
+        best = d
+        target = b
+      }
+    }
+    this.focusBlockAt(target, 'point', x, y)
+  }
+
+  private focusBlockAt(block: Block, mode: 'start' | 'end' | 'point', x: number, y: number): void {
+    if (block.kind === 'table') {
+      this.focusCell(block, mode === 'start' ? -1 : this.tableRowCount(block) - 1, 0)
+      return
+    }
+    block.el.focus()
+    if (mode === 'start') this.placeCaret(block, 0)
+    else if (mode === 'end') this.placeCaret(block, (block.el.textContent ?? '').length)
+    // 'point'：math/image 行聚焦后已显源码并把光标置于行尾；普通行按横坐标落点
+    else if (block.code || !(hasMath(block.raw) || hasImage(block.raw))) {
+      placeCaretAtPoint(x, y, block.el)
     }
   }
 

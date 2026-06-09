@@ -129,11 +129,17 @@ function openInMain(filePath: string): void {
 function showQuickPanel(win: BrowserWindow): void {
   sendQuickDocs(win)
   quickSuppressBlur = true // 显示前后短暂忽略失焦
+  // 每次显示都重设：这俩属性在窗口隐藏后会失效，不重设会被绑回创建时那屏，
+  // 导致「在当前 space 按了不出来、却在桌面那屏闪一下」。
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  win.setAlwaysOnTop(true, 'screen-saver') // 高于全屏 App / 菜单栏，确保浮在当前这屏最上
+  win.center()
   win.show() // 浮层 + 全 space 可见，会盖在当前这屏上
   win.focus() // 非激活面板可拿到键盘焦点（改名输入框 / Esc），但不激活整个应用
+  win.moveTop()
   setTimeout(() => {
     quickSuppressBlur = false
-  }, 350)
+  }, 450)
 }
 
 /** 按下全局快捷键：开关式唤起/收起速记面板 */

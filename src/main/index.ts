@@ -80,9 +80,9 @@ function createQuickWindow(): BrowserWindow {
   quickWindow = win
   win.setAlwaysOnTop(true, 'floating')
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-  // 失焦（点到别的窗口 / App）即隐藏 —— 但刚显示瞬间的假失焦忽略掉
+  // 失焦（点到别的窗口 / App）即关闭（下次重建）—— 但刚显示瞬间的假失焦忽略掉
   win.on('blur', () => {
-    if (!quickSuppressBlur) win.hide()
+    if (!quickSuppressBlur && !win.isDestroyed()) win.close()
   })
   win.on('closed', () => {
     if (quickWindow === win) quickWindow = null
@@ -111,7 +111,7 @@ function sendQuickDocs(win: BrowserWindow): void {
 
 /** 在主窗口打开某文档（速记面板「在编辑器中打开」用） */
 function openInMain(filePath: string): void {
-  quickWindow?.hide()
+  if (quickWindow && !quickWindow.isDestroyed()) quickWindow.close()
   if (process.platform === 'darwin') app.show()
   if (!mainWindow) {
     pendingOpenPath = filePath
@@ -127,6 +127,7 @@ function openInMain(filePath: string): void {
 
 /** 唤起速记面板浮层并刷新文档列表（不激活整个应用，避免切走当前 App / 桌面）。 */
 function showQuickPanel(win: BrowserWindow): void {
+  if (win.isDestroyed()) return // 加载未完就被再次按键关掉了
   sendQuickDocs(win)
   quickSuppressBlur = true // 显示前后短暂忽略失焦
   // 每次显示都重设：这俩属性在窗口隐藏后会失效，不重设会被绑回创建时那屏，
@@ -142,19 +143,20 @@ function showQuickPanel(win: BrowserWindow): void {
   }, 450)
 }
 
-/** 按下全局快捷键：开关式唤起/收起速记面板 */
+/** 按下全局快捷键：开关式唤起/收起速记面板。
+ *  关键：每次都「重建」窗口。常驻隐藏窗口会被 macOS 绑死在创建时那屏（重启后尤甚），
+ *  导致在别的 space 唤起只在桌面闪一下。现做现弹则总能落在当前这屏。 */
 function openQuickPanel(): void {
-  // 已显示 → 再按一次收起（开关）
-  if (quickWindow && quickWindow.isVisible()) {
-    quickWindow.hide()
+  // 已显示 → 再按一次收起（销毁，下次重建）
+  if (quickWindow && !quickWindow.isDestroyed() && quickWindow.isVisible()) {
+    quickWindow.close()
     return
   }
-  if (!quickWindow) {
-    const win = createQuickWindow()
-    win.webContents.once('did-finish-load', () => showQuickPanel(win))
-    return
-  }
-  showQuickPanel(quickWindow)
+  // 销毁可能残留的隐藏窗口，再新建一个（落在当前 space）
+  if (quickWindow && !quickWindow.isDestroyed()) quickWindow.close()
+  quickWindow = null
+  const win = createQuickWindow()
+  win.webContents.once('did-finish-load', () => showQuickPanel(win))
 }
 
 /** 注册（或刷新）全局快捷键。无任何速记文档时不占用快捷键。返回是否注册成功。 */
@@ -261,7 +263,7 @@ app.whenReady().then(() => {
 
   // 速记面板管理（在此注册，避免与 ipc.ts 形成循环依赖）
   const refreshPanel = (): void => {
-    if (quickWindow) sendQuickDocs(quickWindow)
+    if (quickWindow && !quickWindow.isDestroyed()) sendQuickDocs(quickWindow)
   }
   // 主窗口菜单：把当前文档加入面板
   ipcMain.handle('quick:add', (_e, payload: { path: string }) => {
@@ -304,7 +306,9 @@ app.whenReady().then(() => {
     return { ok: true }
   })
   ipcMain.on('quick:openInMain', (_e, p: { path: string }) => openInMain(p.path))
-  ipcMain.on('quickpanel:hide', () => quickWindow?.hide())
+  ipcMain.on('quickpanel:hide', () => {
+    if (quickWindow && !quickWindow.isDestroyed()) quickWindow.close()
+  })
 
   buildMenu()
   createWindow()

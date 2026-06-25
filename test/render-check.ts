@@ -104,6 +104,18 @@ check(
   isValidTable(buildTable(parseTable('| a | b |\n| --- | :---: |\n| 1 | 2 |'))) === true
 )
 check('table build keeps align', buildTable(parseTable('| a |\n| :---: |')).includes(':---:'))
+// 单元格内含字面竖线：转义后列数不变、内容可还原
+const pipeTbl = buildTable({
+  headers: ['a | b', 'c'],
+  aligns: ['none', 'none'],
+  rows: [['1 | 2', '3']]
+})
+const pipeParsed = parseTable(pipeTbl)
+check('cell pipe escaped in source', pipeTbl.includes('a \\| b'))
+check('cell pipe keeps col count', pipeParsed.headers.length === 2 && pipeParsed.rows[0].length === 2)
+check('cell pipe roundtrips header', pipeParsed.headers[0] === 'a | b')
+check('cell pipe roundtrips cell', pipeParsed.rows[0][0] === '1 | 2')
+check('cell pipe table still valid', isValidTable(pipeTbl) === true)
 
 console.log(`\n${pass} passed, ${fail} failed`)
 if (fail > 0) process.exit(1)

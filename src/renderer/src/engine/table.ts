@@ -17,8 +17,23 @@ export interface TableModel {
 function splitRow(line: string): string[] {
   let t = line.trim()
   if (t.startsWith('|')) t = t.slice(1)
-  if (t.endsWith('|')) t = t.slice(0, -1)
-  return t.split('|')
+  if (t.endsWith('|') && !t.endsWith('\\|')) t = t.slice(0, -1)
+  // 按「未转义的 |」切分，并把 \| 还原成字面竖线（单元格内可含 |）
+  const cells: string[] = []
+  let cur = ''
+  for (let i = 0; i < t.length; i++) {
+    if (t[i] === '\\' && t[i + 1] === '|') {
+      cur += '|'
+      i++
+    } else if (t[i] === '|') {
+      cells.push(cur)
+      cur = ''
+    } else {
+      cur += t[i]
+    }
+  }
+  cells.push(cur)
+  return cells
 }
 
 export function isTableRow(line: string): boolean {
@@ -68,7 +83,9 @@ function sepCell(a: Align): string {
 /** 由模型重建 markdown 源码 */
 export function buildTable(model: TableModel): string {
   const n = model.headers.length
-  const row = (cells: string[]): string => '| ' + cells.map((c) => c.trim()).join(' | ') + ' |'
+  // 单元格内的字面 | 转义为 \|，以免与列分隔符混淆
+  const esc = (c: string): string => c.trim().replace(/\|/g, '\\|')
+  const row = (cells: string[]): string => '| ' + cells.map(esc).join(' | ') + ' |'
   const aligns = model.aligns.slice(0, n)
   while (aligns.length < n) aligns.push('none')
   const out = [row(model.headers), '| ' + aligns.map(sepCell).join(' | ') + ' |']

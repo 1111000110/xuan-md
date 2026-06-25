@@ -1345,6 +1345,14 @@ export class Editor {
       void this.insertImageFiles(imgFiles)
       return
     }
+    // 表格单元格：编辑发生在单元格内，需把文本插进单元格而非整张表格块
+    const cell = this.cellFromNode(e.target as Node)
+    if (cell) {
+      e.preventDefault()
+      const text = e.clipboardData?.getData('text/plain') ?? ''
+      if (text) this.pasteTextIntoCell(cell.cell, cell.block, text)
+      return
+    }
     const block = this.blockFromNode(e.target as Node)
     if (!block) return
     e.preventDefault()
@@ -1352,8 +1360,9 @@ export class Editor {
     if (text) this.pasteTextAtCaret(block, text)
   }
 
-  /** 菜单/快捷键「粘贴」。跨块全选时自行用剪贴板文本替换（无原生光标，原生粘贴会失效）；
-   *  其余情形一律交给原生粘贴（图片 / 表格单元格 / 行内插入都走 onPaste，最稳）。 */
+  /** 菜单/快捷键「粘贴」。Cmd+V 被菜单 accelerator 拦截，不会产生原生 paste 事件，
+   *  故文本类粘贴一律自行用 Electron 剪贴板插入（execCommand('paste') 在渲染进程会失效）；
+   *  仅图片 / 无文本 / 出错时才兜底到原生粘贴。 */
   paste(): void {
     try {
       if (this.blockSelection) {
@@ -1361,15 +1370,23 @@ export class Editor {
         return
       }
       const text = window.api.readClipboard()
-      const block = this.activeBlock()
-      if (text && block && block.kind === 'line') {
-        this.pasteTextAtCaret(block, text)
-        return
+      if (text) {
+        // 表格单元格：插进当前聚焦的单元格
+        const cell = this.cellFromNode(document.activeElement)
+        if (cell) {
+          this.pasteTextIntoCell(cell.cell, cell.block, text)
+          return
+        }
+        const block = this.activeBlock()
+        if (block && block.kind === 'line') {
+          this.pasteTextAtCaret(block, text)
+          return
+        }
       }
     } catch (err) {
       console.error('paste failed, fall back to native:', err)
     }
-    // 兜底：原生粘贴（图片 / 表格单元格 / 无文本 / 出错）→ 触发 onPaste 或浏览器默认
+    // 兜底：原生粘贴（图片 / 无文本 / 出错）→ 触发 onPaste 或浏览器默认
     document.execCommand('paste')
   }
 
@@ -1424,6 +1441,20 @@ export class Editor {
       }
     }
     this.renumberLists()
+    this.emitChange()
+  }
+
+  /** 在表格单元格光标处插入纯文本：单元格只能是单行，故把换行/制表折叠为空格；
+   *  竖线 | 原样写入单元格文本，由 buildTable 转义，避免把一格拆成多列。 */
+  private pasteTextIntoCell(cellEl: HTMLElement, block: Block, text: string): void {
+    const clean = text.replace(/\s*\r?\n\s*/g, ' ').replace(/\t/g, ' ')
+    if (!clean) return
+    const { start, end } = selectionOffsets(cellEl)
+    const raw = cellEl.textContent ?? ''
+    cellEl.textContent = raw.slice(0, start) + clean + raw.slice(end)
+    setCaretOffset(cellEl, start + clean.length)
+    this.reRenderCell(cellEl)
+    this.updateTableRaw(block)
     this.emitChange()
   }
 

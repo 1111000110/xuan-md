@@ -125,3 +125,33 @@ export function placeCaretAtPoint(x: number, y: number, el: HTMLElement, preferE
   sel.removeAllRanges()
   sel.addRange(fallback)
 }
+
+/** 屏幕坐标 (x,y) 对应、且夹在 el 内的插入点（node+offset）；用于重建跨块拖拽中的行内选区 */
+export function caretPositionAt(
+  x: number,
+  y: number,
+  el: HTMLElement
+): { node: Node; offset: number } | null {
+  const doc = document as Document & {
+    caretRangeFromPoint?: (x: number, y: number) => Range | null
+    caretPositionFromPoint?: (x: number, y: number) => CaretPos | null
+  }
+  const at = (px: number, py: number): { node: Node; offset: number } | null => {
+    if (doc.caretRangeFromPoint) {
+      const r = doc.caretRangeFromPoint(px, py)
+      if (r && el.contains(r.startContainer)) return { node: r.startContainer, offset: r.startOffset }
+    } else if (doc.caretPositionFromPoint) {
+      const p = doc.caretPositionFromPoint(px, py)
+      if (p && el.contains(p.offsetNode)) return { node: p.offsetNode, offset: p.offset }
+    }
+    return null
+  }
+  const box = el.getBoundingClientRect()
+  const cx = Math.max(box.left + 1, Math.min(x, box.right - 1))
+  const cy = Math.max(box.top + 1, Math.min(y, box.bottom - 1))
+  // 先按真实 y 取点；越界（落到别的块）则夹到本块内的 y 再试，保证落在本块文本上
+  const pos = at(cx, y) || at(cx, cy) || at(cx, box.top + box.height / 2)
+  if (pos) return pos
+  // 取点失败：指针在块上方 → 块首；在下方 → 块末
+  return { node: el, offset: y > box.bottom ? el.childNodes.length : 0 }
+}

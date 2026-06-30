@@ -16,7 +16,8 @@ import {
   setCaretOffset,
   selectionOffsets,
   caretClientRect,
-  placeCaretAtPoint
+  placeCaretAtPoint,
+  caretPositionAt
 } from './caret'
 import {
   type CodeInfo,
@@ -123,6 +124,9 @@ export class Editor {
   /** 鼠标拖拽跨块选择：按下时的锚点块下标；刚靠拖拽形成选区时为 true（避免随后的 click 清掉） */
   private mouseAnchorIdx: number | null = null
   private dragSelected = false
+  /** 按下时锚点块内的插入点（行内拖拽用），及本轮拖拽是否曾进入过整块选择模式 */
+  private mouseAnchorCaret: { node: Node; offset: number } | null = null
+  private dragDidBlockMode = false
   /** 表格右键菜单的浮层 */
   private tableMenu: HTMLElement | null = null
   /** 当前文档路径（用于图片相对路径解析 + 选择图片保存目录） */
@@ -1212,12 +1216,20 @@ export class Editor {
 
   private onMouseDown = (e: MouseEvent): void => {
     this.dragSelected = false
+    this.dragDidBlockMode = false
+    this.mouseAnchorCaret = null
     if (e.button !== 0 || this.readOnly) {
       this.mouseAnchorIdx = null
       return
     }
     const block = this.blockFromNode(e.target as Node)
     this.mouseAnchorIdx = block ? this.indexOf(block) : this.blockIndexAtY(e.clientY)
+    // 记下按下点在锚点块内的插入点：若拖拽中途越界进过整块选择（清空了原生选区），
+    // 回到本块时据此重建行内选区，避免「拖到行首一带选区丢失」。
+    const anchor = this.blocks[this.mouseAnchorIdx]
+    if (anchor && anchor.kind === 'line') {
+      this.mouseAnchorCaret = caretPositionAt(e.clientX, e.clientY, anchor.el)
+    }
   }
 
   private onMouseMove = (e: MouseEvent): void => {
@@ -1226,6 +1238,26 @@ export class Editor {
     if (idx === this.mouseAnchorIdx) {
       // 仍在同一块内：交给原生选区（可选中行内局部），清掉可能的块选
       if (this.blockSelection) this.clearBlockSelection()
+      // 若本轮曾进过整块选择，原生选区已被清空——用固定锚点重建行内选区
+      if (this.dragDidBlockMode && this.mouseAnchorCaret) {
+        const focus = caretPositionAt(e.clientX, e.clientY, this.blocks[idx].el)
+        if (focus) {
+          try {
+            window
+              .getSelection()
+              ?.setBaseAndExtent(
+                this.mouseAnchorCaret.node,
+                this.mouseAnchorCaret.offset,
+                focus.node,
+                focus.offset
+              )
+            this.dragSelected = true
+            e.preventDefault()
+          } catch {
+            /* 节点失效则放任原生 */
+          }
+        }
+      }
       return
     }
     const from = Math.min(this.mouseAnchorIdx, idx)
@@ -1236,12 +1268,19 @@ export class Editor {
     }
     this.selectAnchor = this.mouseAnchorIdx
     this.applyBlockSelection(from, to)
+    this.dragDidBlockMode = true
     this.dragSelected = true
     e.preventDefault()
   }
 
   private onMouseUp = (): void => {
+    // 拖拽已形成非折叠选区时，标记本次为拖选，避免随后的 click 落在空白区把选区收起
+    // （行内右→左拖到行首左侧空白时尤其明显：click 命中 root/host → 放置光标 → 选区丢失）
+    if (this.mouseAnchorIdx != null && !window.getSelection()?.isCollapsed) {
+      this.dragSelected = true
+    }
     this.mouseAnchorIdx = null
+    this.mouseAnchorCaret = null
   }
 
   private onClick = (e: MouseEvent): void => {
@@ -1271,6 +1310,11 @@ export class Editor {
   /** 点击两侧空白（editor-host 自身）→ 就近聚焦 */
   private onHostClick = (e: MouseEvent): void => {
     if (e.target !== this.host) return // 只处理点在两侧空白本身的情况
+    // 刚靠拖拽形成的选区：本次 click 不要清掉它（与 onClick 一致）
+    if (this.dragSelected) {
+      this.dragSelected = false
+      return
+    }
     if (this.blockSelection) this.clearBlockSelection()
     this.selectCycle = 0
     this.placeCaretInBlankArea(e.clientX, e.clientY)

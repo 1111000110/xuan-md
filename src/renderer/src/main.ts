@@ -406,8 +406,18 @@ const handlers: Record<ActionName, () => void | Promise<unknown>> = {
     else editor.cut()
   },
   paste: () => {
-    if (activeNativeInput()) document.execCommand('paste')
-    else editor.paste()
+    const inp = activeNativeInput()
+    if (inp) {
+      // execCommand('paste') 在渲染进程读不到剪贴板；用 Electron 剪贴板手动插入，
+      // 并派发 input 事件，让查找框等监听者（实时搜索）能响应。
+      const text = window.api.readClipboard()
+      if (text) {
+        const s = inp.selectionStart ?? inp.value.length
+        const e = inp.selectionEnd ?? inp.value.length
+        inp.setRangeText(text, s, e, 'end')
+        inp.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+    } else editor.paste()
   },
   insertTable: () => {
     if (activeNativeInput()) return

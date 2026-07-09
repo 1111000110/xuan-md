@@ -542,6 +542,45 @@ export class Editor {
         .querySelectorAll('[contenteditable]')
         .forEach((c) => ((c as HTMLElement).contentEditable = 'false'))
     }
+    const scroll = block.el.querySelector('.tbl-scroll')
+    if (scroll) this.attachTableDragScroll(scroll as HTMLElement)
+  }
+
+  /** 表格横向溢出时抓住拖动来滚：横向拖=滚动，竖向/短拖=交给单元格选文本。 */
+  private attachTableDragScroll(scroll: HTMLElement): void {
+    const overflow = (): boolean => scroll.scrollWidth - scroll.clientWidth > 1
+    const refresh = (): void => {
+      scroll.classList.toggle('tbl-scrollable', overflow())
+    }
+    refresh()
+    requestAnimationFrame(refresh) // 字体/布局稳定后再量一次
+
+    scroll.addEventListener('mousedown', (e: MouseEvent) => {
+      if (e.button !== 0 || !overflow()) return
+      const startX = e.clientX
+      const startY = e.clientY
+      const startLeft = scroll.scrollLeft
+      let locked = false
+      const move = (ev: MouseEvent): void => {
+        const dx = ev.clientX - startX
+        const dy = ev.clientY - startY
+        if (!locked) {
+          if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return
+          if (Math.abs(dx) <= Math.abs(dy) * 1.2) return end() // 竖/斜向为主 → 让单元格选文本
+          locked = true
+          scroll.classList.add('tbl-grabbing')
+        }
+        scroll.scrollLeft = startLeft - dx
+        ev.preventDefault()
+      }
+      const end = (): void => {
+        document.removeEventListener('mousemove', move)
+        document.removeEventListener('mouseup', end)
+        scroll.classList.remove('tbl-grabbing')
+      }
+      document.addEventListener('mousemove', move)
+      document.addEventListener('mouseup', end)
+    })
   }
 
   private paintCode(block: Block): void {

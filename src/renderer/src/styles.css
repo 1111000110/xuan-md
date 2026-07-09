@@ -536,6 +536,23 @@ body.no-outline #outline {
 .tbl-wrap {
   position: relative;
   display: inline-block;
+  max-width: 100%;
+}
+/* 表格横向滚动容器：溢出时抓住拖动来滚，隐藏滚动条（+按钮在容器外，不被裁剪） */
+.tbl-scroll {
+  overflow-x: auto;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+.tbl-scroll::-webkit-scrollbar {
+  display: none;
+}
+.tbl-scroll.tbl-scrollable {
+  cursor: grab;
+}
+.tbl-scroll.tbl-grabbing,
+.tbl-scroll.tbl-grabbing * {
+  cursor: grabbing !important;
 }
 .md-table {
   border-collapse: collapse;

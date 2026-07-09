@@ -100,7 +100,7 @@ function alignStyle(a: Align): string {
 /** 渲染为可编辑的 <table>（单元格 contenteditable，附增行 / 增列按钮） */
 export function renderEditableTable(raw: string): string {
   const m = parseTable(raw)
-  let html = '<div class="tbl-wrap"><table class="md-table"><thead><tr>'
+  let html = '<div class="tbl-wrap"><div class="tbl-scroll"><table class="md-table"><thead><tr>'
   m.headers.forEach((h, c) => {
     html += `<th contenteditable="true" data-r="-1" data-c="${c}"${alignStyle(m.aligns[c])}>${renderInline(h)}</th>`
   })
@@ -112,7 +112,7 @@ export function renderEditableTable(raw: string): string {
     })
     html += '</tr>'
   })
-  html += '</tbody></table>'
+  html += '</tbody></table></div>'
   html += '<button class="tbl-add-col" contenteditable="false" title="添加列">+</button>'
   html += '<button class="tbl-add-row" contenteditable="false" title="添加行">+</button>'
   html += '</div>'

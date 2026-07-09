@@ -29,6 +29,7 @@ import {
 } from './code'
 import { hasMath, renderMathPreview } from './math'
 import { hasImage, renderImagePreview, extFromMime } from './image'
+import { isMermaidLang, renderMermaid, mermaidCached, resetMermaid } from './mermaid'
 import {
   isTableRow,
   isSeparatorRow,
@@ -189,6 +190,11 @@ export class Editor {
     })
     // 光标移动时更新「邻近标记符」的显隐
     document.addEventListener('selectionchange', this.onSelectionChange)
+    // 系统明暗切换：清 mermaid 缓存并按新主题重渲
+    window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change', () => {
+      resetMermaid()
+      this.syncMermaid()
+    })
 
     this.setContent('')
   }
@@ -217,6 +223,7 @@ export class Editor {
     this.detectAndMergeTables()
     this.emitChange()
     this.restoringHistory = false
+    this.syncMermaid()
   }
 
   /** 告知当前文档路径，供图片相对路径解析与保存目录选择 */
@@ -248,6 +255,31 @@ export class Editor {
     )
     const el = hs[index] as HTMLElement | undefined
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  /** 点击文档内 #锚点链接：滚动到 slug 匹配的标题（去大小写/空格/标点后比较，兼容各种生成规则）。 */
+  scrollToAnchor(hash: string): boolean {
+    const norm = (s: string): string => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
+    let raw = hash.replace(/^#/, '')
+    try {
+      raw = decodeURIComponent(raw)
+    } catch {
+      /* 非法转义则保留原串 */
+    }
+    const want = norm(raw)
+    if (!want) return false
+    const hs = this.root.querySelectorAll(
+      '.block.h1, .block.h2, .block.h3, .block.h4, .block.h5, .block.h6'
+    )
+    for (const el of Array.from(hs)) {
+      // 标题块 textContent 含前导 # 标记符（DOM 文本 === raw），先剥掉
+      const clean = (el.textContent ?? '').replace(/^\s*#{1,6}\s*/, '')
+      if (norm(clean) === want) {
+        ;(el as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'start' })
+        return true
+      }
+    }
+    return false
   }
 
   onChange(cb: () => void): void {
@@ -528,6 +560,79 @@ export class Editor {
       block.el.className = `block code-fence code-fence-${role}`
       block.el.innerHTML = renderFenceLine(block.raw)
     }
+  }
+
+  // ── Mermaid 图表层 ──────────────────────────────────────────────────────────
+  /** 给定围栏 open 块下标，返回 [openIdx, closeIdx, 是否有闭合```]。 */
+  private mermaidRange(openIdx: number): [number, number, boolean] {
+    let j = openIdx + 1
+    while (j < this.blocks.length && this.blocks[j].code && this.blocks[j].code!.role !== 'close') j++
+    const hasClose = j < this.blocks.length && this.blocks[j].code?.role === 'close'
+    return [openIdx, hasClose ? j : j - 1, hasClose]
+  }
+
+  /** 由某折叠块下标回溯到它所属 mermaid 围栏的 open 下标；非 mermaid 返回 -1。 */
+  private mermaidOpenOf(idx: number): number {
+    let i = idx
+    while (i >= 0 && this.blocks[i].code && this.blocks[i].code!.role !== 'open') i--
+    const c = i >= 0 ? this.blocks[i].code : null
+    return c?.role === 'open' && isMermaidLang(c.lang) ? i : -1
+  }
+
+  /** 协调 mermaid 预览层：未编辑的 ```mermaid 围栏折叠源码、显示渲染图；光标在围栏内则显源码。 */
+  private syncMermaid(): void {
+    this.root.querySelectorAll('.mm-preview').forEach((el) => el.remove())
+    this.root.querySelectorAll('.block.mm-hidden').forEach((el) => el.classList.remove('mm-hidden'))
+
+    const active = this.blockFromNode(document.activeElement)
+    const activeIdx = active ? this.indexOf(active) : -1
+
+    for (let i = 0; i < this.blocks.length; i++) {
+      const open = this.blocks[i]
+      if (!open.code || open.code.role !== 'open' || !isMermaidLang(open.code.lang)) continue
+      const [openIdx, closeIdx, hasClose] = this.mermaidRange(i)
+      i = closeIdx // 跳过整段
+      if (activeIdx >= openIdx && activeIdx <= closeIdx) continue // 正在编辑 → 保留源码
+      const code = this.blocks
+        .slice(openIdx + 1, (hasClose ? closeIdx - 1 : closeIdx) + 1)
+        .map((b) => b.raw)
+        .join('\n')
+      if (!code.trim()) continue
+      for (let k = openIdx; k <= closeIdx; k++) this.blocks[k].el.classList.add('mm-hidden')
+      const prev = document.createElement('div')
+      prev.className = 'mm-preview'
+      prev.contentEditable = 'false'
+      prev.dataset.code = code
+      prev.addEventListener('mousedown', (e) => {
+        e.preventDefault()
+        this.expandMermaid(openIdx, false)
+      })
+      this.root.insertBefore(prev, this.blocks[openIdx].el)
+      const cached = mermaidCached(code)
+      if (cached) {
+        prev.innerHTML = cached
+      } else {
+        prev.innerHTML = '<div class="mm-loading">图表渲染中…</div>'
+        void renderMermaid(code).then((svg) => {
+          if (prev.isConnected && prev.dataset.code === code) prev.innerHTML = svg
+        })
+      }
+    }
+  }
+
+  /** 展开某 mermaid 围栏为源码并聚焦（atEnd=从下方进入时落到末行，便于键盘导航进出）。 */
+  private expandMermaid(openIdx: number, atEnd: boolean): void {
+    const [, closeIdx, hasClose] = this.mermaidRange(openIdx)
+    for (let k = openIdx; k <= closeIdx; k++) this.blocks[k]?.el.classList.remove('mm-hidden')
+    const prev = this.blocks[openIdx]?.el.previousElementSibling
+    if (prev && prev.classList.contains('mm-preview')) prev.remove()
+    // 落到首/末内容行（跳过 ``` 围栏行，直接编辑图源）
+    const firstContent = Math.min(openIdx + 1, closeIdx)
+    const lastContent = hasClose ? Math.max(openIdx, closeIdx - 1) : closeIdx
+    const target = this.blocks[atEnd ? lastContent : firstContent]
+    if (!target) return
+    target.el.focus()
+    this.placeCaret(target, atEnd ? target.raw.length : 0)
   }
 
   /** 文档级扫描：根据 ``` 围栏给每个块标注代码角色，返回角色发生变化的块 */
@@ -1301,8 +1406,17 @@ export class Editor {
     }
     if (this.blockSelection) this.clearBlockSelection()
     this.selectCycle = 0
-    // 编辑态下点击链接不跳转，只用于定位光标
-    if (target.closest('a')) e.preventDefault()
+    const link = target.closest('a')
+    if (link) {
+      const href = link.getAttribute('href') ?? ''
+      // 文档内 #锚点：滚动到对应标题；其余链接编辑态不跳转，仅定位光标
+      if (href.startsWith('#')) {
+        e.preventDefault()
+        this.scrollToAnchor(href)
+        return
+      }
+      e.preventDefault()
+    }
     // 点击编辑列内的空白（行间隙 / 左右内边距 / 底部留白）→ 就近聚焦
     if (target === this.root) this.placeCaretInBlankArea(e.clientX, e.clientY)
   }
@@ -1361,6 +1475,8 @@ export class Editor {
   }
 
   private onFocusToggle = (e: FocusEvent): void => {
+    // 焦点进出后（微任务里等 activeElement 落定）协调 mermaid：进围栏显源码、离开则渲染
+    queueMicrotask(() => this.syncMermaid())
     const block = this.blockFromNode(e.target as Node)
     if (!block) return
     if (block.kind === 'table') return // 表格始终渲染态，编辑发生在单元格内
@@ -2265,6 +2381,15 @@ export class Editor {
     const idx = this.indexOf(block)
     const target = this.blocks[idx + dir]
     if (!target) return false
+
+    // 目标落在折叠的 mermaid 图上：展开该围栏并把光标送进源码（否则会卡在 display:none 块上）
+    if (target.el.classList.contains('mm-hidden')) {
+      const openIdx = this.mermaidOpenOf(idx + dir)
+      if (openIdx >= 0) {
+        this.expandMermaid(openIdx, dir < 0)
+        return true
+      }
+    }
 
     if (target.kind === 'table') {
       if (dir < 0) this.focusCell(target, this.tableRowCount(target) - 1, 0)

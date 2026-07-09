@@ -360,6 +360,45 @@ body.no-outline #outline {
   font-size: 1.04em;
 }
 
+/* ── Mermaid 图表 ── */
+.block.mm-hidden {
+  display: none;
+}
+.mm-preview {
+  margin: 6px 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--code-block-bg);
+  text-align: center;
+  cursor: pointer;
+  overflow-x: auto;
+}
+.mm-preview svg {
+  max-width: 100%;
+  height: auto;
+}
+.mm-preview:hover {
+  border-color: var(--accent);
+}
+.mm-loading {
+  color: var(--muted);
+  font-size: 0.9em;
+  padding: 12px;
+}
+.mm-error {
+  margin: 0;
+  padding: 10px;
+  text-align: left;
+  white-space: pre-wrap;
+  color: var(--code-fg);
+  background: var(--code-bg);
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  cursor: text;
+}
+
 /* ── 查找替换浮层 ── */
 .find-bar {
   position: fixed;

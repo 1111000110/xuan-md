@@ -544,13 +544,20 @@ body.no-outline #outline {
 .md-table th,
 .md-table td {
   border: 1px solid var(--border);
-  padding: 6px 13px;
+  padding: 5px 12px;
   min-width: 2.5em;
   outline: none;
+  vertical-align: top;
+  line-height: 1.5;
+  /* 覆盖 .block 继承来的 break-word：正文按词/字自然换行，仅超长串才强断，
+     不再把 Method / 租户隔离 这类逐字拆成竖排 */
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 .md-table th {
   background: var(--code-block-bg);
   font-weight: 600;
+  white-space: nowrap; /* 表头短标签整行不折，顺带撑出该列的合理最小宽度 */
 }
 .md-table tbody tr:nth-child(even) td {
   background: var(--code-block-bg);

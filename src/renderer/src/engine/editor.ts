@@ -1362,12 +1362,15 @@ export class Editor {
     this.dragSelected = false
     this.dragDidBlockMode = false
     this.mouseAnchorCaret = null
-    if (e.button !== 0 || this.readOnly) {
+    if (e.button !== 0) {
       this.mouseAnchorIdx = null
       return
     }
     const block = this.blockFromNode(e.target as Node)
     this.mouseAnchorIdx = block ? this.indexOf(block) : this.blockIndexAtY(e.clientY)
+    // 只读预览不需要接管拖拽（浏览器原生选区可以精确保留首尾的部分文本），
+    // 但仍要记录这次按下：mouseup 后的 click 若落在编辑列/两侧空白，不应把选区折叠成光标。
+    if (this.readOnly) return
     // 记下按下点在锚点块内的插入点：若拖拽中途越界进过整块选择（清空了原生选区），
     // 回到本块时据此重建行内选区，避免「拖到行首一带选区丢失」。
     const anchor = this.blocks[this.mouseAnchorIdx]
@@ -1378,6 +1381,8 @@ export class Editor {
 
   private onMouseMove = (e: MouseEvent): void => {
     if (this.mouseAnchorIdx == null || (e.buttons & 1) === 0) return
+    // 只读预览完全保留浏览器的原生跨行选区，不转换为可编辑模式的整块选择。
+    if (this.readOnly) return
     const idx = this.blockIndexAtY(e.clientY)
     if (idx === this.mouseAnchorIdx) {
       // 仍在同一块内：交给原生选区（可选中行内局部），清掉可能的块选

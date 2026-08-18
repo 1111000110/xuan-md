@@ -27,6 +27,36 @@ import {
 let mainWindow: BrowserWindow | null = null
 let pendingOpenPath: string | null = null
 
+const MARKDOWN_PATH_RE = /\.(md|markdown|mdown|mkd|mkdn|mdtext)$/i
+
+/** Windows 文件关联会把被双击的文档作为 argv 传进来；忽略 Electron / Squirrel 的启动参数。 */
+function markdownPathFromArgs(argv: readonly string[]): string | null {
+  return argv.find((arg) => !arg.startsWith('-') && MARKDOWN_PATH_RE.test(arg)) ?? null
+}
+
+// Windows 没有 macOS 的 open-file 事件。保持单实例，才能让第二次双击 .md 时把文件转交给
+// 已运行的编辑器，而不是再开一个空白进程。
+let shouldLaunch = true
+if (process.platform === 'win32') {
+  const hasLock = app.requestSingleInstanceLock()
+  if (!hasLock) {
+    shouldLaunch = false
+    app.quit()
+  } else {
+    pendingOpenPath = markdownPathFromArgs(process.argv)
+    app.on('second-instance', (_event, argv) => {
+      const filePath = markdownPathFromArgs(argv)
+      if (!filePath) return
+      // 极早的第二次启动可能发生在 ready 前；先缓存，等首个窗口加载完成后再打开。
+      if (!app.isReady()) {
+        pendingOpenPath = filePath
+        return
+      }
+      openInMain(filePath)
+    })
+  }
+}
+
 // 自定义协议：把本地图片经 xmd://local/<编码后的绝对路径> 提供给渲染层加载，
 // 规避 file:// 在 http/file 源下被 webSecurity 拦截。必须在 app ready 前声明为特权协议。
 protocol.registerSchemesAsPrivileged([
@@ -59,9 +89,8 @@ function createQuickWindow(): BrowserWindow {
     height: 620,
     show: false,
     frame: false, // 无边框面板：靠失焦 / Esc 收起
-    // 非激活面板（NSPanel）：能拿键盘焦点但不激活整个应用、不切 space，
-    // 所以像 Spotlight 那样浮在当前这屏上，既不跳桌面、也不会拿不到焦点而秒关。
-    type: 'panel',
+    // panel 是 macOS 专属窗口类型；Windows 使用普通无边框窗口以保留系统任务栏和焦点行为。
+    ...(process.platform === 'darwin' ? { type: 'panel' as const } : {}),
     center: true,
     resizable: true,
     minimizable: false,
@@ -79,7 +108,9 @@ function createQuickWindow(): BrowserWindow {
   })
   quickWindow = win
   win.setAlwaysOnTop(true, 'floating')
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  if (process.platform === 'darwin') {
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  }
   // 失焦（点到别的窗口 / App）即关闭（下次重建）—— 但刚显示瞬间的假失焦忽略掉
   win.on('blur', () => {
     if (!quickSuppressBlur && !win.isDestroyed()) win.close()
@@ -125,27 +156,26 @@ function openInMain(filePath: string): void {
   sendOpenFile(mainWindow, filePath)
 }
 
-/** 唤起速记面板浮层并刷新文档列表（不激活整个应用，避免切走当前 App / 桌面）。 */
+/** 唤起速记面板并刷新文档列表。 */
 function showQuickPanel(win: BrowserWindow): void {
   if (win.isDestroyed()) return // 加载未完就被再次按键关掉了
   sendQuickDocs(win)
   quickSuppressBlur = true // 显示前后短暂忽略失焦
-  // 每次显示都重设：这俩属性在窗口隐藏后会失效，不重设会被绑回创建时那屏，
-  // 导致「在当前 space 按了不出来、却在桌面那屏闪一下」。
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-  win.setAlwaysOnTop(true, 'screen-saver') // 高于全屏 App / 菜单栏，确保浮在当前这屏最上
+  // macOS 的 workspace 归属会随隐藏失效，显示前需重新设置；Windows 不支持这一语义。
+  if (process.platform === 'darwin') {
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  }
+  win.setAlwaysOnTop(true, process.platform === 'darwin' ? 'screen-saver' : 'floating')
   win.center()
-  win.show() // 浮层 + 全 space 可见，会盖在当前这屏上
-  win.focus() // 非激活面板可拿到键盘焦点（改名输入框 / Esc），但不激活整个应用
+  win.show()
+  win.focus()
   win.moveTop()
   setTimeout(() => {
     quickSuppressBlur = false
   }, 450)
 }
 
-/** 按下全局快捷键：开关式唤起/收起速记面板。
- *  关键：每次都「重建」窗口。常驻隐藏窗口会被 macOS 绑死在创建时那屏（重启后尤甚），
- *  导致在别的 space 唤起只在桌面闪一下。现做现弹则总能落在当前这屏。 */
+/** 按下全局快捷键：开关式唤起/收起速记面板。每次显示重建窗口，避免 macOS workspace 粘连。 */
 function openQuickPanel(): void {
   // 已显示 → 再按一次收起（销毁，下次重建）
   if (quickWindow && !quickWindow.isDestroyed() && quickWindow.isVisible()) {
@@ -252,6 +282,7 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
+  if (!shouldLaunch) return
   // xmd://local/<编码后的绝对路径> → 读取本地文件返回给 <img>
   protocol.handle('xmd', (request) => {
     const url = new URL(request.url)

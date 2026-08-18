@@ -34,3 +34,28 @@ mac:
           - text
 dmg:
   artifactName: ${productName}-${version}-${arch}.${ext}
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: ${productName}-Setup-${version}-${arch}.${ext}
+  fileAssociations:
+    - ext:
+        - md
+        - markdown
+        - mdown
+        - mkd
+        - mkdn
+        - mdtext
+      name: Markdown Document
+      description: Markdown document
+nsis:
+  # Windows 文件关联由 NSIS 的机器级安装注册，因此需要管理员权限。
+  perMachine: true
+  allowElevation: true
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: xuan-md

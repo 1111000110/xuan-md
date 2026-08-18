@@ -1,6 +1,6 @@
 # xuan-md
 
-一个 Typora 风格的所见即所得 Markdown 编辑器（macOS，Electron + TypeScript）。
+一个 Typora 风格的所见即所得 Markdown 编辑器（macOS / Windows，Electron + TypeScript）。
 
 ## 特性
 
@@ -20,4 +20,5 @@ pnpm dev          # 启动开发（热更新）
 pnpm typecheck    # 类型检查
 pnpm build        # 构建产物
 pnpm dist:mac     # 打包 macOS 应用
+pnpm dist:win     # 打包 Windows x64 NSIS 安装包（需在 Windows 或 CI 中完成最终验证）
 ```

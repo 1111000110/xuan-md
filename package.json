@@ -1,7 +1,7 @@
 {
   "name": "xuan-md",
   "version": "0.0.1",
-  "description": "xuan-md — Typora 风格的所见即所得 Markdown 编辑器 (macOS)",
+  "description": "xuan-md — Typora 风格的所见即所得 Markdown 编辑器 (macOS / Windows)",
   "main": "./out/main/index.js",
   "author": "xuan",
   "license": "MIT",
@@ -12,7 +12,8 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "pnpm typecheck:node && pnpm typecheck:web",
-    "dist:mac": "electron-vite build && electron-builder --mac"
+    "dist:mac": "electron-vite build && electron-builder --mac",
+    "dist:win": "electron-vite build && electron-builder --win"
   },
   "devDependencies": {
     "@types/katex": "^0.16.8",

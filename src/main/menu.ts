@@ -8,6 +8,7 @@ function send(action: ActionName): void {
 
 export function buildMenu(): void {
   const isMac = process.platform === 'darwin'
+  const quickShortcutHint = isMac ? '⇧⌥Space' : 'Shift+Alt+Space'
 
   const template: Electron.MenuItemConstructorOptions[] = [
     ...(isMac
@@ -40,7 +41,7 @@ export function buildMenu(): void {
         { type: 'separator' },
         { label: '导出为 PDF…', accelerator: 'CmdOrCtrl+Shift+E', click: () => send('exportPdf') },
         { type: 'separator' },
-        { label: '添加当前文档到速记面板（⌘⇧O 唤起）', click: () => send('addQuickDoc') },
+        { label: `添加当前文档到速记面板（${quickShortcutHint} 唤起）`, click: () => send('addQuickDoc') },
         { label: '清空速记面板', click: () => send('clearQuickDocs') },
         { type: 'separator' },
         { label: '关闭标签页', accelerator: 'CmdOrCtrl+W', click: () => send('closeTab') },

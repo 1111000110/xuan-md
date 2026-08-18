@@ -334,8 +334,15 @@ function activeNativeInput(): HTMLInputElement | HTMLTextAreaElement | null {
   return null
 }
 
-/** 把 Electron 加速键串（CommandOrControl+Shift+O）转成易读的符号（⌘⇧O） */
+/** 把 Electron 加速键串转为当前系统习惯的展示形式。 */
 function fmtShortcut(s: string): string {
+  const isMac = /mac/i.test(navigator.platform)
+  if (!isMac) {
+    return s
+      .replace(/CommandOrControl|CmdOrCtrl/g, 'Ctrl')
+      .replace(/Option/g, 'Alt')
+      .replace(/Command|Cmd/g, 'Win')
+  }
   return s
     .replace(/CommandOrControl|CmdOrCtrl|Command|Cmd/g, '⌘')
     .replace(/Shift/g, '⇧')

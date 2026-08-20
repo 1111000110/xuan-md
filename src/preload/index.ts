@@ -16,6 +16,8 @@ const api = {
 
   fileExists: (filePath: string): Promise<boolean> => ipcRenderer.invoke('file:exists', filePath),
 
+  openExternal: (url: string): Promise<boolean> => ipcRenderer.invoke('link:openExternal', url),
+
   saveAs: (content: string, defaultPath?: string): Promise<SaveAsResult> =>
     ipcRenderer.invoke('dialog:saveAs', { content, defaultPath }),
 

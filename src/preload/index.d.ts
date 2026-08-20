@@ -11,6 +11,7 @@ export interface XuanApi {
   openFile: () => Promise<OpenResult>
   writeFile: (filePath: string, content: string) => Promise<WriteResult>
   fileExists: (filePath: string) => Promise<boolean>
+  openExternal: (url: string) => Promise<boolean>
   saveAs: (content: string, defaultPath?: string) => Promise<SaveAsResult>
   updateState: (state: AppState) => void
   savedForClose: () => void

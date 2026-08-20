@@ -142,13 +142,17 @@ export class Editor {
   private restoringHistory = false
   /** 查找替换：浮层 + 状态 */
   private findBar: FindBar | null = null
-  private findHl: HTMLDivElement | null = null
+  /** 当前命中可能跨行，因此用多个覆盖高亮块贴合每一行文字。 */
+  private findHls: HTMLDivElement[] = []
   /** 当前命中在渲染 DOM 里的 Range（缓存，滚动时复用以重定位高亮框） */
   private findHlRange: Range | null = null
   private findMatches: FindMatch[] = []
   private findCurrent = 0
   private findCaseSensitive = false
   private onDocScroll: (() => void) | null = null
+  private findHighlightFrame: number | null = null
+  /** 打开查找前的编辑位置：无结果关闭查找时回到这里。 */
+  private findReturnFocus: HTMLElement | null = null
 
   constructor(parent: HTMLElement) {
     this.host = parent
@@ -1180,6 +1184,8 @@ export class Editor {
   private onSelectionChange = (): void => {
     if (this.readOnly || this.blockSelection) return // 只读 / 跨块选择：不动标记符
     this.syncMarkers()
+    // 表格单元格获得焦点时会显示 Markdown 标记，列宽/换行随之变化；下一帧重算高亮位置。
+    this.queueHighlightPosition()
   }
 
   /** 根据当前光标位置，点亮其所在的 .md 包裹层（含各级祖先），熄灭其余 */
@@ -1453,13 +1459,14 @@ export class Editor {
     const link = target.closest('a')
     if (link) {
       const href = link.getAttribute('href') ?? ''
-      // 文档内 #锚点：滚动到对应标题；其余链接编辑态不跳转，仅定位光标
+      // 文档内 #锚点：滚动到对应标题；外链交给系统浏览器，避免当前编辑窗口被导航替换。
+      e.preventDefault()
       if (href.startsWith('#')) {
-        e.preventDefault()
         this.scrollToAnchor(href)
         return
       }
-      e.preventDefault()
+      if (href) void window.api.openExternal(href)
+      return
     }
     // 点击编辑列内的空白（行间隙 / 左右内边距 / 底部留白）→ 就近聚焦
     if (target === this.root) this.placeCaretInBlankArea(e.clientX, e.clientY)
@@ -1754,6 +1761,11 @@ export class Editor {
   openFind(): void {
     if (!this.findBar) this.findBar = this.buildFindBar()
     const bar = this.findBar
+    // 重复按 Cmd+F 只重选输入框，不覆盖第一次打开前的编辑位置。
+    if (bar.root.style.display !== 'block') {
+      const active = document.activeElement
+      this.findReturnFocus = active instanceof HTMLElement && this.root.contains(active) ? active : null
+    }
     bar.root.style.display = 'block'
     // 若编辑器里有选中文本，拿来作为初始查找词（飞书/Typora 行为）
     const sel = window.getSelection()
@@ -1773,14 +1785,46 @@ export class Editor {
   }
 
   closeFind(): void {
+    // 焦点从查找输入框回到编辑器时，浏览器会默认把焦点元素滚入视野；
+    // 记录当前视口，配合 preventScroll 保证关闭查找后仍停在命中位置。
+    const scroller = document.getElementById('app')
+    const top = scroller?.scrollTop ?? 0
+    const left = scroller?.scrollLeft ?? 0
+    const focusTarget = this.findFocusTarget()
+
     if (this.findBar) this.findBar.root.style.display = 'none'
     this.clearHighlight()
     this.findMatches = []
+    if (this.findHighlightFrame != null) {
+      cancelAnimationFrame(this.findHighlightFrame)
+      this.findHighlightFrame = null
+    }
     if (this.onDocScroll) {
       window.removeEventListener('scroll', this.onDocScroll, true)
       this.onDocScroll = null
     }
-    this.focus()
+    this.restoreFindFocus(focusTarget)
+    const restoreScroll = (): void => {
+      if (!scroller) return
+      scroller.scrollTop = top
+      scroller.scrollLeft = left
+    }
+    restoreScroll()
+    requestAnimationFrame(restoreScroll)
+  }
+
+  /** 优先回到当前命中的可编辑行/单元格；无命中则回到打开查找前的位置。 */
+  private findFocusTarget(): HTMLElement | null {
+    const node = this.findHlRange?.startContainer
+    const start = node instanceof HTMLElement ? node : node?.parentElement
+    const target = start?.closest<HTMLElement>('[contenteditable="true"], .block')
+    return target && this.root.contains(target) ? target : null
+  }
+
+  private restoreFindFocus(target: HTMLElement | null): void {
+    const next = target ?? this.findReturnFocus ?? this.blocks[0]?.el ?? null
+    this.findReturnFocus = null
+    if (next && this.root.contains(next)) next.focus({ preventScroll: true })
   }
 
   /** 用当前查找词重新计算命中列表（不移动视图） */
@@ -1875,39 +1919,72 @@ export class Editor {
     return range
   }
 
-  /** 用缓存的命中 Range 定位高亮框（滚动时也调它，开销小） */
+  /** 把高亮重定位合并到下一帧，等表格焦点切换导致的布局变化完成后再量坐标。 */
+  private queueHighlightPosition(): void {
+    if (!this.findBar || this.findBar.root.style.display === 'none') return
+    if (this.findHighlightFrame != null) return
+    this.findHighlightFrame = requestAnimationFrame(() => {
+      this.findHighlightFrame = null
+      this.showHighlight()
+    })
+  }
+
+  /** 用缓存的命中 Range 定位高亮框（滚动时也调它，开销小）。 */
   private showHighlight(): void {
     const range = this.findHlRange
     if (!range) return this.hideHighlight()
-    let rect: DOMRect
+    let rects: DOMRect[]
     try {
-      rect = range.getBoundingClientRect()
+      rects = Array.from(range.getClientRects())
     } catch {
       return this.hideHighlight()
     }
-    if (!rect.width && !rect.height) return this.hideHighlight()
-    // 命中滚出编辑可视区时隐藏高亮框（保留缓存 Range，滚回可视区再显示）
+    // 命中滚出编辑可视区时隐藏高亮框（保留缓存 Range，滚回可视区再显示）。
+    // 表格还有自己的横向滚动容器，覆盖层需裁进可见表格区域，不能飘到相邻列上。
     const scroller = document.getElementById('app')
-    if (scroller) {
-      const band = scroller.getBoundingClientRect()
-      if (rect.bottom <= band.top || rect.top >= band.bottom) return this.hideHighlight()
+    const start = range.startContainer instanceof HTMLElement ? range.startContainer : range.startContainer.parentElement
+    const tableScroller = start?.closest<HTMLElement>('.tbl-scroll')
+    const clips = [scroller, tableScroller]
+      .filter((el): el is HTMLElement => !!el)
+      .map((el) => el.getBoundingClientRect())
+    const visibleRects: { left: number; top: number; width: number; height: number }[] = []
+    for (const rect of rects) {
+      let left = rect.left
+      let top = rect.top
+      let right = rect.right
+      let bottom = rect.bottom
+      for (const clip of clips) {
+        left = Math.max(left, clip.left)
+        top = Math.max(top, clip.top)
+        right = Math.min(right, clip.right)
+        bottom = Math.min(bottom, clip.bottom)
+      }
+      if (right > left && bottom > top) visibleRects.push({ left, top, width: right - left, height: bottom - top })
     }
-    if (!this.findHl) {
-      this.findHl = document.createElement('div')
-      this.findHl.className = 'find-hl'
-      document.body.appendChild(this.findHl)
+    if (!visibleRects.length) return this.hideHighlight()
+    while (this.findHls.length < visibleRects.length) {
+      const hl = document.createElement('div')
+      hl.className = 'find-hl'
+      document.body.appendChild(hl)
+      this.findHls.push(hl)
     }
-    const hl = this.findHl
-    hl.style.display = 'block'
-    hl.style.left = `${rect.left}px`
-    hl.style.top = `${rect.top}px`
-    hl.style.width = `${rect.width}px`
-    hl.style.height = `${rect.height}px`
+    this.findHls.forEach((hl, i) => {
+      const rect = visibleRects[i]
+      if (!rect) {
+        hl.style.display = 'none'
+        return
+      }
+      hl.style.display = 'block'
+      hl.style.left = `${rect.left}px`
+      hl.style.top = `${rect.top}px`
+      hl.style.width = `${rect.width}px`
+      hl.style.height = `${rect.height}px`
+    })
   }
 
   /** 仅隐藏高亮框（保留缓存 Range，便于滚回可视区时重新显示） */
   private hideHighlight(): void {
-    if (this.findHl) this.findHl.style.display = 'none'
+    for (const hl of this.findHls) hl.style.display = 'none'
   }
 
   /** 清除高亮：清缓存 Range 并隐藏（查找关闭 / 无结果时用） */

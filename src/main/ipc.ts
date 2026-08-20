@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, app, dialog } from 'electron'
+import { ipcMain, BrowserWindow, app, dialog, shell } from 'electron'
 import { writeFile, mkdir, access } from 'fs/promises'
 import { join, dirname, basename } from 'path'
 import { randomBytes } from 'crypto'
@@ -39,6 +39,19 @@ export function registerIpc(): void {
   ipcMain.handle('file:exists', async (_e, filePath: string) => {
     try {
       await access(filePath)
+      return true
+    } catch {
+      return false
+    }
+  })
+
+  // Markdown 链接由渲染进程显式转交，避免编辑器在当前窗口内导航走掉。
+  ipcMain.handle('link:openExternal', async (_e, rawUrl: unknown): Promise<boolean> => {
+    if (typeof rawUrl !== 'string') return false
+    try {
+      const url = new URL(rawUrl)
+      if (!['http:', 'https:', 'mailto:'].includes(url.protocol)) return false
+      await shell.openExternal(url.toString())
       return true
     } catch {
       return false

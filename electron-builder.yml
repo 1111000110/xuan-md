@@ -9,6 +9,7 @@ files:
 asarUnpack:
   - resources/**
 mac:
+  icon: build/icon.icns
   target:
     - dmg
     - zip
@@ -35,6 +36,7 @@ mac:
 dmg:
   artifactName: ${productName}-${version}-${arch}.${ext}
 win:
+  icon: build/icon.ico
   target:
     - target: nsis
       arch:
